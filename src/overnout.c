@@ -12,8 +12,6 @@ size_t callback(void *contents, size_t size, size_t nmemb, void *userp) {
     return realsize;
 }
 
-
-
 /**
  * Entry: Fetch the RSA public key from a remote URL 
  */
