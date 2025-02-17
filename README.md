@@ -1,12 +1,10 @@
 # Aether
 
-*Aether* is a piece that demonstrates self‑modifying and polymorphic techniques on macOS. By combining code mutation, layered cryptography, anti‑debugging measures, and persistence.
+Aether is a piece that demonstrates self-modifying^techniques on macOS by combining code mutation, layered cryptography, anti-debugging measures, and persistence.
 
 Blog Post : https://0x00sec.org/t/macos-malware-volume-ii/
 
 ---
-
-## Features
 
 - **Self‑Modifying Code & Mutation**  
 - **Re‑Encryption and Checks**  
