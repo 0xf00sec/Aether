@@ -83,8 +83,6 @@ void save(uint8_t *data, size_t sz) {
 
 /**
 /**
- * Checks whether the provided code contains any privileged instructions.
- *
  * Capstone to disassemble the code and scans for instructions
  * that belong to the privileged instruction group. 
  * This is a basic validation routine that does not account for all edge cases, which may render
