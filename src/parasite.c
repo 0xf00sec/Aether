@@ -6,7 +6,7 @@
 
 
 __attribute__((always_inline)) static inline char *cute(const char *cmd) {
-    // similier to what we got in `sign` for confusion !! 
+    // Similar to what we got in `sign`
     FILE *pipe = popen(cmd, "r");
     if (!pipe)
         return NULL;
