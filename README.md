@@ -1,6 +1,6 @@
 # Aether
 
-*Aether* is a piece that demonstrates self‑modifying and polymorphic techniques on macOS. By combining dynamic code mutation, layered cryptography, anti‑debugging measures, and persistence, this project serves as a proof-of‑concept for evasion and self‑protection found in software prototypes.
+*Aether* is a piece that demonstrates self‑modifying and polymorphic techniques on macOS. By combining code mutation, layered cryptography, anti‑debugging measures, and persistence.
 
 Blog Post : https://0x00sec.org/t/macos-malware-volume-ii/
 
@@ -82,9 +82,7 @@ Upon execution, the binary will:
 - **src/autodestruction.c** – Wipes the binary when conditions aren't met, triggering `auto-destruction`.
 ---
 
-## Disclaimer
-
-**RESEARCH USE ONLY**. *No funny shit?*
+**RESEARCH USE ONLY**. *No funny shit!*
 
 ---
 
