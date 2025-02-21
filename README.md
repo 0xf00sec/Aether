@@ -2,8 +2,6 @@
 
 Aether is a piece that demonstrates self-modifying^techniques on macOS by combining code mutation, layered cryptography, anti-debugging measures, and persistence.
 
-Blog Post : https://0x00sec.org/t/macos-malware-volume-ii/
-
 ---
 
 - **Self‑Modifying Code & Mutation**  
@@ -86,3 +84,4 @@ Upon execution, the binary will:
 
 Author: 
 - [@0xf00s](https://github.com/0xf00s/)
+- Blog: [0x00sec.org](https://0x00sec.org/t/macos-malware-volume-ii/)
