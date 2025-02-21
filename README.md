@@ -85,4 +85,4 @@ Upon execution, the binary will:
 ---
 
 Author: 
-- [@0x0000000000000000](https://github.com/0xf00s/)
+- [@0xf00s](https://github.com/0xf00s/)
