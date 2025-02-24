@@ -84,4 +84,4 @@ Upon execution, the binary will:
 
 Author: 
 - [@0xf00s](https://github.com/0xf00s/)
-- Blog: [0x00sec.org](https://0x00sec.org/t/macos-malware-volume-ii/)
+- Blog: [0x00sec.org](https://0x00sec.org/t/morphing-mach-os-self-mutating-macos-malware/43019)
