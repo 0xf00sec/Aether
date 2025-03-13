@@ -11,7 +11,7 @@ INCDIR  := inc
 
 # linker flags
 CFLAGS  := -O2 -I$(INCDIR) -w -Wall -Wextra
-LDFLAGS := -framework Foundation -framework security -lcrypto -lcapstone -lssl -lcurl -lz
+LDFLAGS := -framework Foundation -lcrypto -lcapstone -lssl -lcurl -lz
 
 # Source files and object files
 SOURCES := $(wildcard $(SRCDIR)/*.c)
