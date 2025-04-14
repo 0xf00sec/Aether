@@ -1,50 +1,9 @@
 # Aether
 
-Aether is a piece that demonstrates self-modifying^techniques on macOS by combining code mutation, layered cryptography, anti-debugging measures, and persistence.
+Aether, self-modifying implant designed for macOS, demonstrating runtime code mutation, and C2 communication. written with modularity and stealth in mind, it leverages Mach-O internals, encryption, and anti-analysis and persistence.
 
----
+----
 
-- **Self‑Modifying Code & Mutation**  
-- **Re‑Encryption and Checks**  
-- **Anti‑Debug/Anti‑Analysis**  
-- **System Profiling & File Collection**  
-- **Persistence, Self‑Relocation & Auto‑Destruction**  
----
-
-## What You Need
-
-- **Platform:** macOS (Mach‑O binaries)
-- **Compiler:** clang
-- **Dependencies:**  
-  - [Capstone](https://www.capstone-engine.org/)  
-  - [OpenSSL](https://www.openssl.org/)  
-  - [CommonCrypto](https://developer.apple.com/documentation/security/common_crypto) (macOS Framework)  
-  - [libcurl](https://curl.se/libcurl/)  
-  - [zlib](https://www.zlib.net/)
-
-Ensure you have all of this installed before building.
-
----
-
-To compile, simply run:
-
-```bash
-make
-```
-
-To clean build artifacts, run:
-
-```bash
-make clean
-```
-
----
-
-```bash
-./aether
-```
-
-Upon execution, the binary will:    
 ```                        
 +-------------------------------+
 |  Where You At?                |
@@ -79,9 +38,3 @@ Upon execution, the binary will:
 ---
 
 **RESEARCH USE ONLY**. *No funny shit!*
-
----
-
-Author: 
-- [@0xf00s](https://github.com/0xf00s/)
-- Blog: [0x00sec.org](https://0x00sec.org/t/morphing-mach-os-self-mutating-macos-malware/43019)
