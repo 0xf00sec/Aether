@@ -1,6 +1,6 @@
 # Aether
 
-Aether, self-modifying implant designed for macOS, demonstrating runtime code mutation, and C2 communication. written with modularity and stealth in mind, it leverages Mach-O internals, encryption, and anti-analysis and persistence.
+Aether, self-modifying implant designed for macOS, demonstrating runtime code mutation, and C2 communication. written with stealth in mind, it leverages Mach-O internals, encryption, anti-analysis and persistence.
 
 ----
 
