@@ -4,7 +4,7 @@
 + *   Simple (copy, zero, PRNG, encryption wrappers) to payload
 + *   wrapping, network I/O, file collection, corruption and cleanup.
 + *   Also includes the “boot” & “cook” stages for on‐the‐fly decryption,
-+ *   mutation and execution of your payload.
++ *   mutation and execution.
 + *
 + * Sections:
 + *   – Low‐level:    optimized memory moves, zeroing, fd wrappers
@@ -19,7 +19,7 @@
 + * Notes:
 + *   – Fully extensible for new techniques.
 + *   – Minimal macOS Gatekeeper/XProtect evasion baked in, but
-+ *     meant to be a research framework, not production.
++ *     meant to be a research sample, not release.
 + */
     #include <wisp.h>
     #include <decoder.h>
