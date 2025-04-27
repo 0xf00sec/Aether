@@ -1,6 +1,6 @@
 # Aether
 
-Aether is a self-modifying implant targeting macOS (x86/ARM). Designed to operate filelessly, The implant leverages runtime code mutation, dynamic encryption, and Mach-O internals. For C2 communication, it uses Deaddrop and HTTPS for configuration retrieval and data exfiltration, It operates entirely in userland, utilizing native APIs and low-level constructs.
+Aether is a minimalist, self-mutating macOS implant (x86/ARM) designed for fileless execution, runtime mutation, dynamic in-memory encryption, and stealthy C2 via dead-drop and HTTPS, operating entirely through native APIs and Mach-O manipulation.
 
 ---
 
