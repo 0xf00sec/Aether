@@ -9,8 +9,8 @@ CFLAGS   := -Wall -Wextra -Iinc -Iinclude -w
 LDFLAGS  := -lcurl -lssl -lcrypto -lz
 
 SRC_DIR  := src
-X86_DIR  := x86
-ARM_DIR  := arm64
+X86_DIR  := $(SRC_DIR)/x86
+ARM_DIR  := $(SRC_DIR)/arm64
 OBJ_DIR  := obj
 BIN_DIR  := bin
 
@@ -22,7 +22,7 @@ else ifeq ($(UNAME_M),aarch64)
     ARCH := arm
     CFLAGS += -DARCH_ARM
 else
-    $(error m? $(UNAME_M))
+    $(error ? $(UNAME_M))
 endif
 
 SRCS := $(SRC_DIR)/entry.c \
@@ -39,7 +39,7 @@ endif
 ifeq ($(DEBUG),1)
     CFLAGS += -DTEST -g -O2
 else
-    CFLAGS += -DRELEASE 
+    CFLAGS += -DRELEASE
 endif
 
 OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(SRCS))
