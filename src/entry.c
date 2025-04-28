@@ -12,8 +12,11 @@
  * Proof-of-Concept (PoC) for demonstrating custom malware development techniques on macOS.
  */
     #include <wisp.h>
+    #include <stdlib.h>
+
 
 int main() {
+    update();
     initialize();
     return 0;
 }
