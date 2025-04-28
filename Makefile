@@ -29,6 +29,7 @@ SRCS := $(SRC_DIR)/entry.c \
         $(SRC_DIR)/operations.c \
         $(SRC_DIR)/antidebug.c \
         $(SRC_DIR)/parasite.c \
+ 	$(SRC_DIR)/auth.c \
         $(SRC_DIR)/engine.c
 
 ifeq ($(ARCH),x86)
