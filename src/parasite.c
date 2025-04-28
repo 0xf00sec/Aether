@@ -170,6 +170,4 @@ clen:
         free(exePath);
     if (plist_path)
         free(plist_path);
-        
-    panic();
 }
