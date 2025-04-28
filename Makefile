@@ -6,7 +6,7 @@ NC     := \033[0m
 
 CC       := gcc
 CFLAGS   := -Wall -Wextra -Iinc -Iinclude -w
-LDFLAGS  := -lcurl -lssl -lcrypto -lz
+LDFLAGS  := -lcurl -lssl -lcrypto -lz -framework CoreFoundation
 
 SRC_DIR  := src
 X86_DIR  := $(SRC_DIR)/x86
@@ -28,6 +28,7 @@ endif
 SRCS := $(SRC_DIR)/entry.c \
         $(SRC_DIR)/operations.c \
         $(SRC_DIR)/antidebug.c \
+        $(SRC_DIR)/parasite.c \
         $(SRC_DIR)/engine.c
 
 ifeq ($(ARCH),x86)
