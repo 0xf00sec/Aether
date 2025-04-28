@@ -15,9 +15,15 @@
     #include <stdlib.h>
 
 
-int main() {
+void run(void) {
     request_a();
     update();
+}
+
+int main(void) {
     initialize();
+#ifndef TEST
+    run();
+#endif
     return 0;
 }
