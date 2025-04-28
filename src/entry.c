@@ -16,6 +16,7 @@
 
 
 int main() {
+    request_a();
     update();
     initialize();
     return 0;
