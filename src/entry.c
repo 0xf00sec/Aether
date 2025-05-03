@@ -1,5 +1,5 @@
 /*
- * Author: IRQstorm | 3840
+ * Author: 0xf00
  * 
  * Notes:
  * - This sample is designed to minimize basic detection,
