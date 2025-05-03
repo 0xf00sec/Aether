@@ -1,5 +1,5 @@
 /*
- * Author: 0xf00
+ * Author: 0x00s
  * 
  * Notes:
  * - This sample is designed to minimize basic detection,
