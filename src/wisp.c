@@ -1,12 +1,9 @@
 /*
  * + Author: 0x00s
+ * +:
  * - macOS Gatekeeper may flag it based on static heuristics, 
  * - XProtect consistently fails to detect it due to runtime mutation.
  * - Originally developed from internal research and shared publicly to demonstrate core techniques.
- *   – Fully extensible for new techniques.
- *     This is meant to be a research sample, not a production release.
- *     For now, you can test the mutation and execution with the simple function below,
- *     run `./testme.sh` for more verbose output. 
  *
  * + Execution Flow:
  *   - An anti-debug check is performed first, using simple symbol obfuscation.
@@ -25,8 +22,14 @@
  *     or embedded directly.
  *   - A correct key is essential for successful execution.
  *
+ * + Misc:
+ *   – Fully extensible for new techniques.
+ *     This is meant to be a research sample, not a production release.
+ *     For now, you can test the mutation and execution with the simple function below,
+ *     run `./testme.sh` for more verbose output. 
+ *
  * + Purpose:
- * Proof-of-Concept (PoC) for demonstrating custom malware development techniques on macOS.
+ *   Proof-of-Concept for custom macOS malware techniques.
  */
 
 #include <wisp.h>
