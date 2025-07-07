@@ -53,7 +53,7 @@ __attribute__((always_inline)) inline uint32_t chacha20_random(chacha_state_t *r
 __attribute__((always_inline)) inline void chacha20_init(chacha_state_t *rng, const uint8_t *seed, size_t len) {
     uint8_t hash[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(seed, (CC_LONG)len, hash);
-    memcpy(rng->key, hash, K);
+    memcpy(rng->key, hash, KEY_SIZE);
 
     uint8_t ivh[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(hash, CC_SHA256_DIGEST_LENGTH, ivh);
