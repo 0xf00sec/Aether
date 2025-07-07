@@ -51,12 +51,19 @@ __attribute__((always_inline)) inline uint32_t chacha20_random(chacha_state_t *r
 }
 
 __attribute__((always_inline)) inline void chacha20_init(chacha_state_t *rng, const uint8_t *seed, size_t len) {
-    uint8_t key_hash[CC_SHA256_DIGEST_LENGTH], iv_hash[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256(seed, (CC_LONG)len, key_hash);
-    memcpy(rng->key, key_hash, KEY_SIZE);
-    CC_SHA256(key_hash, CC_SHA256_DIGEST_LENGTH, iv_hash);
-    memcpy(rng->iv, iv_hash, 12);
+    uint8_t hash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(seed, (CC_LONG)len, hash);
+    memcpy(rng->key, hash, K);
+
+    uint8_t ivh[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(hash, CC_SHA256_DIGEST_LENGTH, ivh);
+    memcpy(rng->iv, ivh, 12);
 
     rng->position = 64;
-    rng->counter = ((uint64_t)time(NULL)) ^ getpid();
+
+    uint64_t counter;
+    if (SecRandomCopyBytes(kSecRandomDefault, sizeof(counter), &counter) != 0) {
+        // Die
+    }
+    rng->counter = counter;
 }
