@@ -45,6 +45,7 @@ extern "C" {
 #include <mach-o/loader.h>
 #include <mach-o/getsect.h>
 #include <mach-o/fat.h>
+#include <Security/SecRandom.h>
 #include <libkern/OSCacheControl.h>
 #include <mach/mach_time.h>
 #include <IOKit/IOKitLib.h>
