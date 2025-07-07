@@ -8,7 +8,7 @@ NC     := \033[0m
 # Compiler 
 CC       := gcc
 CFLAGS   := -Wall -Wextra -Iinc -Iinclude -w
-LDFLAGS  := -lcurl -lssl -lcrypto -lz -framework CoreFoundation -framework OpenDirectory
+LDFLAGS  := -lcurl -lssl -lcrypto -lz -framework CoreFoundation -framework Security -framework OpenDirectory
 
 # Dir
 SRC_DIR  := src
