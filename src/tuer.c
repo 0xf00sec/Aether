@@ -1,5 +1,9 @@
 #include <wisp.h>
 
+/*-------------------------------------------
+///  DIe 
+-------------------------------------------*/
+
 __attribute__((always_inline)) static inline void f_buffer(unsigned char *buf, size_t len,
                                                            wipe_pattern_t pattern, unsigned char custom) {
     switch (pattern) {
