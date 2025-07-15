@@ -1,5 +1,8 @@
-// strings.c
 #include <wisp.h>
+
+/*-------------------------------------------
+///   sTRINGS 
+-------------------------------------------*/
 
 const enc_vault_t vault[] = { 
     { // [0] "https://pastebin.com/raw/{rand}"
