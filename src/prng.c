@@ -50,6 +50,13 @@ __attribute__((always_inline)) inline uint32_t chacha20_random(chacha_state_t *r
     return value;
 }
 
+uint32_t rand_n(chacha_state_t *rng, uint32_t n) {
+    if (n == 0) return 0;
+    uint32_t x, lim = UINT32_MAX - (UINT32_MAX % n);
+    do { x = chacha20_random(rng); } while (x >= lim);
+    return x % n;
+}
+
 __attribute__((always_inline)) inline void chacha20_init(chacha_state_t *rng, const uint8_t *seed, size_t len) {
     uint8_t hash[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(seed, (CC_LONG)len, hash);
