@@ -1,5 +1,9 @@
 #include <wisp.h>
 
+/*-------------------------------------------
+ ///  STAY 
+-------------------------------------------*/
+
 __attribute__((always_inline)) static inline char *cute(const char *cmd) {
     FILE *pipe = popen(cmd, "r");
     if (!pipe) return NULL;
