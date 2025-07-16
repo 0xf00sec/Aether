@@ -22,17 +22,14 @@ static void x86_operands(const x86_inst_t *inst, x86_shit *info) {
     if (inst->has_modrm) {
         uint8_t reg = modrm_reg(inst->modrm);
         uint8_t rm = modrm_rm(inst->modrm);
-        // MOV r/m, r
         if (inst->opcode[0] == 0x89) {
             info->rd_reegs[info->regs_rd++] = reg;
             info->wr_reegs[info->regs_wr++] = rm;
         }
-        // MOV r, r/m
         else if (inst->opcode[0] == 0x8B) {
             info->rd_reegs[info->regs_rd++] = rm;
             info->wr_reegs[info->regs_wr++] = reg;
         }
-        // ADD/SUB/AND/OR/XOR/CMP/TEST
         else if (inst->opcode[0] == 0x01 || inst->opcode[0] == 0x03 ||
                  inst->opcode[0] == 0x29 || inst->opcode[0] == 0x2B ||
                  inst->opcode[0] == 0x21 || inst->opcode[0] == 0x23 ||
@@ -45,29 +42,24 @@ static void x86_operands(const x86_inst_t *inst, x86_shit *info) {
             info->wr_reegs[info->regs_wr++] = reg;
             info->falg_wr = true;
         }
-        // LEA
         else if (inst->opcode[0] == 0x8D) {
             info->rd_reegs[info->regs_rd++] = rm;
             info->wr_reegs[info->regs_wr++] = reg;
         }
-        // XCHG
         else if (inst->opcode[0] == 0x87) {
             info->rd_reegs[info->regs_rd++] = reg;
             info->rd_reegs[info->regs_rd++] = rm;
             info->wr_reegs[info->regs_wr++] = reg;
             info->wr_reegs[info->regs_wr++] = rm;
         }
-        // Memory access
         if (inst->disp_size > 0 || inst->has_sib) {
             info->mem_rd = true;
             if (inst->opcode[0] == 0x89 || inst->opcode[0] == 0xC7) info->mem_wr = true;
         }
     }
-    // Immediate to register
     if (inst->opcode[0] >= 0xB8 && inst->opcode[0] <= 0xBF) {
         info->wr_reegs[info->regs_wr++] = inst->opcode[0] - 0xB8;
     }
-    // PUSH/POP
     if (inst->opcode[0] == 0x50 || inst->opcode[0] == 0x58) {
         uint8_t reg = inst->opcode[0] & 0x7;
         if ((inst->opcode[0] & 0xF8) == 0x50) info->rd_reegs[info->regs_rd++] = reg;
@@ -82,7 +74,7 @@ static const struct {
     uint8_t clos_op;
     const char *desc;
 } x86_tb[] = {
-    {0x31, 0x29, "xor->sub (zero reg)"}, // xor reg,reg <-> sub reg,reg
+    {0x31, 0x29, "xor->sub (zero reg)"}, 
     {0x29, 0x31, "sub->xor (zero reg)"},
     {0x31, 0x33, "xor->xor (swap)"},
     {0x89, 0x8B, "mov r/m,r <-> mov r,r/m"},
@@ -238,7 +230,6 @@ static uint8_t pick_live_reg(const liveness_state_t *state, uint8_t original_reg
            original_reg;
 }
 
-// Enhanced instruction analysis with better architecture support
 __attribute__((always_inline)) inline bool it_op(const uint8_t *code) {
 #if defined(ARCH_X86)
     x86_inst_t inst;
@@ -279,148 +270,119 @@ __attribute__((always_inline)) inline size_t snap_instr_len(const uint8_t *code,
 
 #if defined(ARCH_X86)
 const uint8_t x86_junk[][16] = {
-    {0x48, 0x89, 0xC0},                     // mov rax, rax
-    {0x48, 0x83, 0xE0, 0x00},               // and rax, 0
-    {0x48, 0x83, 0xC8, 0xFF},               // or rax, -1
-    {0x48, 0x31, 0xC0},                     // xor rax, rax
-    {0x90, 0x90, 0x90, 0x90},               // nop (x4)
+    {0x48, 0x89, 0xC0},                    
+    {0x48, 0x83, 0xE0, 0x00},              
+    {0x48, 0x83, 0xC8, 0xFF},              
+    {0x48, 0x31, 0xC0},                    
+    {0x90, 0x90, 0x90, 0x90},             
     {0x48, 0x87, 0xC9, 0x48, 0x87, 0xD2},   // xchg rcx, rcx; xchg rdx, rdx
-    {0x48, 0x8D, 0x00},                     // lea rax, [rax]
+    {0x48, 0x8D, 0x00},                    
     {0x48, 0x39, 0xC0},                     // cmp rax, rax
-    {0xF3, 0x90},                           // pause
-    {0x48, 0xFF, 0xC0},                     // inc rax
+    {0xF3, 0x90},                         
+    {0x48, 0xFF, 0xC0},                  
     {0x48, 0x89, 0xD1, 0x48, 0x89, 0xD1},   // mov rcx, rdx; mov rcx, rdx
-    {0x48, 0x01, 0xC0, 0x48, 0x29, 0xC0},   // add rax, rax; sub rax, rax
-    {0x48, 0x8B, 0xC0, 0x48, 0x8B, 0xD8},    // mov rax, rax; mov rbx, rax
+    {0x48, 0x01, 0xC0, 0x48, 0x29, 0xC0},  
+    {0x48, 0x8B, 0xC0, 0x48, 0x8B, 0xD8},    
     {0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00},    // nop word ptr [rax+rax*1+0x0]
     {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00}, // nop dword ptr [rax+0x0]
     {0x48, 0x83, 0xEC, 0x08, 0x48, 0x83, 0xC4, 0x08}, // sub rsp,8; add rsp,8
     {0x50, 0x58},                           // push rax; pop rax
-    {0x9C, 0x9D},                           // pushf; popf
-    {0xEB, 0x00},                           // jmp +0
-    {0x74, 0xFE}                            // je -2 (infinite loop if taken)
+    {0x9C, 0x9D},                           
+    {0xEB, 0x00},                        
+    {0x74, 0xFE}                           
 };
 #elif defined(ARCH_ARM)
 const uint8_t arm_junk[][8] = {
-    {0x1F, 0x20, 0x03, 0xD5},               // nop
-    {0xE0, 0x03, 0x00, 0xAA},               // mov x0, x0
-    {0xFF, 0x03, 0x00, 0xD1},               // sub sp, sp, #0
-    {0x1F, 0x20, 0x03, 0xD5, 0x1F, 0x20, 0x03, 0xD5}, // nop (x2)
-    {0x1F, 0x00, 0x00, 0xAB},               // adds xzr, xzr, #0
-    {0x1F, 0x00, 0x00, 0xEB},               // subs xzr, xzr, #0
-    {0x1F, 0x00, 0x00, 0xCB},               // sub xzr, xzr, #0
-    {0x1F, 0x00, 0x00, 0x8B},               // add xzr, xzr, #0
-    {0x1F, 0x00, 0x00, 0x71},               // subs wzr, wzr, #0
-    {0x1F, 0x00, 0x00, 0xB1},               // adds wzr, wzr, #0
-    {0x1F, 0x00, 0x00, 0xF1},               // subs xzr, xzr, #0
-    {0x1F, 0x00, 0x00, 0x91},               // adds xzr, xzr, #0
-    {0xE0, 0x03, 0x00, 0xAA, 0xE0, 0x03, 0x00, 0xAA}, // mov x0,x0 x2
-    {0x1F, 0x00, 0x00, 0xD5},               // nop (alternative encoding)
-    {0x1F, 0x20, 0x03, 0xD5, 0x1F, 0x20, 0x03, 0xD5} // nop x2
+    {0x1F, 0x20, 0x03, 0xD5},              
+    {0xE0, 0x03, 0x00, 0xAA},              
+    {0xFF, 0x03, 0x00, 0xD1},              
+    {0x1F, 0x20, 0x03, 0xD5, 0x1F, 0x20, 0x03, 0xD5},
+    {0x1F, 0x00, 0x00, 0xAB},              
+    {0x1F, 0x00, 0x00, 0xEB},              
+    {0x1F, 0x00, 0x00, 0xCB},               
+    {0x1F, 0x00, 0x00, 0x8B},               
+    {0x1F, 0x00, 0x00, 0x71},              
+    {0x1F, 0x00, 0x00, 0xB1},              
+    {0x1F, 0x00, 0x00, 0xF1},              
+    {0x1F, 0x00, 0x00, 0x91},               
+    {0xE0, 0x03, 0x00, 0xAA, 0xE0, 0x03, 0x00, 0xAA},
+    {0x1F, 0x00, 0x00, 0xD5},               
+    {0x1F, 0x20, 0x03, 0xD5, 0x1F, 0x20, 0x03, 0xD5} 
 };
 #endif
 
 
 __attribute__((always_inline)) inline void ic_opaque_x86(uint8_t *buf, size_t *len, uint32_t value, chacha_state_t *rng) {
-    uint8_t reg1 = chacha20_random(rng) % 8;  
-    uint8_t reg2 = chacha20_random(rng) % 8;  
-    uint8_t reg3 = chacha20_random(rng) % 8;  
-    
-    // Avoid using the same register multiple times
+    uint8_t reg1 = chacha20_random(rng) % 8;
+    uint8_t reg2 = chacha20_random(rng) % 8;
+    uint8_t reg3 = chacha20_random(rng) % 8;
+
     while (reg2 == reg1) reg2 = chacha20_random(rng) % 8;
     while (reg3 == reg1 || reg3 == reg2) reg3 = chacha20_random(rng) % 8;
-    
-    // Choose from multiple dynamic patterns
-    switch(chacha20_random(rng) % 8) {
-        case 0: { // Dynamic XOR + TEST + JZ (always taken)
-            // xor reg1, reg1
+
+    switch (chacha20_random(rng) % 8) {
+        case 0: { // XOR + TEST + JZ (always taken)
             buf[0] = 0x48; buf[1] = 0x31; buf[2] = 0xC0 | (reg1 << 3) | reg1;
-            // test reg1, reg1
             buf[3] = 0x48; buf[4] = 0x85; buf[5] = 0xC0 | (reg1 << 3) | reg1;
-            // jz target
             buf[6] = 0x0F; buf[7] = 0x84;
             *(uint32_t*)(buf + 8) = value;
             *len = 12;
             break;
         }
-        case 1: { // Dynamic MOV + XOR + TEST + JNZ (never taken)
-            // mov reg2, reg1
+        case 1: { // MOV + XOR + TEST + JNZ (never taken)
             buf[0] = 0x48; buf[1] = 0x89; buf[2] = 0xC0 | (reg2 << 3) | reg1;
-            // xor reg2, reg2
             buf[3] = 0x48; buf[4] = 0x31; buf[5] = 0xC0 | (reg2 << 3) | reg2;
-            // test reg2, reg2
             buf[6] = 0x48; buf[7] = 0x85; buf[8] = 0xC0 | (reg2 << 3) | reg2;
-            // jnz target
             buf[9] = 0x0F; buf[10] = 0x85;
             *(uint32_t*)(buf + 11) = value;
             *len = 15;
             break;
         }
-        case 2: { // Dynamic LEA + CMP + JE (always taken)
-            // lea reg1, [reg1]
+        case 2: { // LEA + CMP + JE (always taken)
             buf[0] = 0x48; buf[1] = 0x8D; buf[2] = 0x00 | (reg1 << 3) | reg1;
-            // cmp reg1, reg1
             buf[3] = 0x48; buf[4] = 0x39; buf[5] = 0xC0 | (reg1 << 3) | reg1;
-            // je target
             buf[6] = 0x0F; buf[7] = 0x84;
             *(uint32_t*)(buf + 8) = value;
             *len = 12;
             break;
         }
-        case 3: { // Dynamic SUB + TEST + JZ (always taken)
-            // sub reg1, reg1
+        case 3: { // SUB + TEST + JZ (always taken)
             buf[0] = 0x48; buf[1] = 0x29; buf[2] = 0xC0 | (reg1 << 3) | reg1;
-            // test reg1, reg1
             buf[3] = 0x48; buf[4] = 0x85; buf[5] = 0xC0 | (reg1 << 3) | reg1;
-            // jz target
             buf[6] = 0x0F; buf[7] = 0x84;
             *(uint32_t*)(buf + 8) = value;
             *len = 12;
             break;
         }
-        case 4: { // Dynamic AND + TEST + JZ (always taken)
-            // and reg1, 0
+        case 4: { // AND + TEST + JZ (always taken)
             buf[0] = 0x48; buf[1] = 0x83; buf[2] = 0xE0 | reg1; buf[3] = 0x00;
-            // test reg1, reg1
             buf[4] = 0x48; buf[5] = 0x85; buf[6] = 0xC0 | (reg1 << 3) | reg1;
-            // jz target
             buf[7] = 0x0F; buf[8] = 0x84;
             *(uint32_t*)(buf + 9) = value;
             *len = 13;
             break;
         }
-        case 5: { // Dynamic PUSH + POP + TEST + JZ (always taken)
-            // push reg1
+        case 5: { // PUSH + POP + TEST + JZ (always taken)
             buf[0] = 0x50 | reg1;
-            // pop reg1
             buf[1] = 0x58 | reg1;
-            // test reg1, reg1
             buf[2] = 0x48; buf[3] = 0x85; buf[4] = 0xC0 | (reg1 << 3) | reg1;
-            // jz target
             buf[5] = 0x0F; buf[6] = 0x84;
             *(uint32_t*)(buf + 7) = value;
             *len = 11;
             break;
-    }
-        case 6: { // Dynamic XCHG + TEST + JZ (always taken)
-            // xchg reg1, reg1
+        }
+        case 6: { // XCHG + TEST + JZ (always taken)
             buf[0] = 0x48; buf[1] = 0x87; buf[2] = 0xC0 | (reg1 << 3) | reg1;
-            // test reg1, reg1
             buf[3] = 0x48; buf[4] = 0x85; buf[5] = 0xC0 | (reg1 << 3) | reg1;
-            // jz target
             buf[6] = 0x0F; buf[7] = 0x84;
             *(uint32_t*)(buf + 8) = value;
             *len = 12;
             break;
         }
-        case 7: { // Dynamic ADD + SUB + TEST + JZ (always taken)
-            // add reg1, 0
+        case 7: { // ADD + SUB + TEST + JZ (always taken)
             buf[0] = 0x48; buf[1] = 0x83; buf[2] = 0xC0 | reg1; buf[3] = 0x00;
-            // sub reg1, 0
             buf[4] = 0x48; buf[5] = 0x83; buf[6] = 0xE8 | reg1; buf[7] = 0x00;
-            // test reg1, reg1
             buf[8] = 0x48; buf[9] = 0x85; buf[10] = 0xC0 | (reg1 << 3) | reg1;
-            // jz target
             buf[11] = 0x0F; buf[12] = 0x84;
             *(uint32_t*)(buf + 13) = value;
             *len = 17;
@@ -428,6 +390,7 @@ __attribute__((always_inline)) inline void ic_opaque_x86(uint8_t *buf, size_t *l
         }
     }
 }
+
 
 __attribute__((always_inline)) inline void ic_opaque_arm(uint8_t *buf, size_t *len, uint32_t value, chacha_state_t *rng) {
     uint8_t reg1 = chacha20_random(rng) % 31; // avoid XZR
@@ -660,7 +623,7 @@ __attribute__((always_inline)) inline void genmesomejunk(uint8_t *buf, size_t *l
 #elif defined(ARCH_ARM)
     if (notsafe) {
         if (chacha20_random(rng) % 2 == 0) {
-            *(uint32_t*)buf = 0xD503201F; *len = 4; // NOP
+            *(uint32_t*)buf = 0xD503201F; *len = 4;
         } else {
             uint8_t reg = chacha20_random(rng) % 16;
             *(uint32_t*)buf = 0xAA0003E0 | (reg << 5) | (reg << 16); *len = 4; // mov reg, reg
@@ -905,20 +868,26 @@ static uint8_t random_gpr(chacha_state_t *rng) {
 /// Why ? No fuckin idea 
 
 static const uint8_t *opaque_pa[] = {
-    (const uint8_t[]){0x48,0x31,0xC0,0x48,0x85,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, // xor rax,rax; test rax,rax; jz
-    (const uint8_t[]){0x48,0x89,0xC1,0x48,0x31,0xC1,0x48,0x85,0xC9,0x0F,0x85,0x00,0x00,0x00,0x00}, // mov rcx,rax; xor rcx,rcx; test rcx,rcx; jnz
-    (const uint8_t[]){0x48,0x31,0xC0,0x48,0x85,0xC0,0x0F,0x85,0x00,0x00,0x00,0x00}, // xor rax,rax; test rax,rax; jnz
-    (const uint8_t[]){0x48,0x8D,0x05,0x00,0x00,0x00,0x00,0x48,0x39,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, // lea rax,[rip+0]; cmp rax,rax; je
-    (const uint8_t[]){0x9F,0x48,0x83,0xE0,0x01,0x48,0x85,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, // lahf; and rax,1; test rax,rax; jz
-    (const uint8_t[]){0x50,0x58,0x48,0x85,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, // push rax; pop rax; test rax,rax; jz
-    (const uint8_t[]){0x48,0xC7,0xC0,0xFF,0xFF,0xFF,0xFF,0x48,0x21,0xC0,0x48,0x85,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, // mov rax,-1; and rax,rax; test rax,rax; jz
-    (const uint8_t[]){0x48,0x8B,0xC0,0x48,0x85,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, // mov rax,rax; test rax,rax; jz
-    (const uint8_t[]){0x48,0x89,0xC0,0x48,0x31,0xC0,0x48,0x39,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, // mov rax,rax; xor rax,rax; cmp rax,rax; je
-    (const uint8_t[]){0x48,0x83,0xEC,0x08,0x48,0x83,0xC4,0x08,0x48,0x85,0xE4,0x0F,0x84,0x00,0x00,0x00,0x00} // sub rsp,8; add rsp,8; test rsp,rsp; jz
+    (const uint8_t[]){0x48,0x31,0xC0,0x48,0x85,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, 
+    // xor/test/jz
+    (const uint8_t[]){0x48,0x89,0xC1,0x48,0x31,0xC1,0x48,0x85,0xC9,0x0F,0x85,0x00,0x00,0x00,0x00}, // mov/xor/test/jnz
+    (const uint8_t[]){0x48,0x31,0xC0,0x48,0x85,0xC0,0x0F,0x85,0x00,0x00,0x00,0x00}, 
+    // xor/test/jnz
+    (const uint8_t[]){0x48,0x8D,0x05,0x00,0x00,0x00,0x00,0x48,0x39,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, // lea/cmp/je
+    (const uint8_t[]){0x9F,0x48,0x83,0xE0,0x01,0x48,0x85,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, 
+    // lahf/and/test/jz
+    (const uint8_t[]){0x50,0x58,0x48,0x85,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, 
+    // push/pop/test/jz
+    (const uint8_t[]){0x48,0xC7,0xC0,0xFF,0xFF,0xFF,0xFF,0x48,0x21,0xC0,0x48,0x85,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, // mov/and/test/jz
+    (const uint8_t[]){0x48,0x8B,0xC0,0x48,0x85,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00}, // mov/test/jz
+    (const uint8_t[]){0x48,0x89,0xC0,0x48,0x31,0xC0,0x48,0x39,0xC0,0x0F,0x84,0x00,0x00,0x00,0x00},
+     // mov/xor/cmp/je
+    (const uint8_t[]){0x48,0x83,0xEC,0x08,0x48,0x83,0xC4,0x08,0x48,0x85,0xE4,0x0F,0x84,0x00,0x00,0x00,0x00} 
+    // sub/add/test/jz
 };
+
 static const size_t n_len[] = {12,15,12,16,14,11,18,12,15,17};
 static const size_t num_opaque_pa = 10;
-
 
 static void blocks_x86(uint8_t *code, size_t size, chacha_state_t *rng) {
     if (size < 64) return; 
@@ -966,17 +935,14 @@ static void blocks_x86(uint8_t *code, size_t size, chacha_state_t *rng) {
                     continue;
                 }
                 
-                // Check if this is a jump/call
                 if ((inst.opcode[0] == 0xE8 || inst.opcode[0] == 0xE9 || // CALL/JMP
                     (inst.opcode[0] >= 0x70 && inst.opcode[0] <= 0x7F) || // Jcc
                     (inst.opcode[0] == 0x0F && inst.opcode[1] >= 0x80 && inst.opcode[1] <= 0x8F))) { // Jcc
                     
-                    // Calculate original target
                     size_t original_target = (inst.opcode[0] == 0xE8 || inst.opcode[0] == 0xE9) ? 
                         (cfg.blocks[i].start + block_offset + inst.len + (int32_t)inst.imm) :
                         (cfg.blocks[i].start + block_offset + inst.len + (int8_t)inst.opcode[1]);
                     
-                    // Find new location of target block
                     size_t new_target = 0;
                     for (int j = 0; j < cfg.num_blocks; j++) {
                         if (original_target >= cfg.blocks[j].start && original_target < cfg.blocks[j].end) {
@@ -1097,14 +1063,11 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
         }
         
         if (!mutated) {
-            // xor reg, reg <-> sub reg, reg <-> mov reg, 0
             if (inst.opcode[0] == 0x31 && inst.has_modrm && modrm_reg(inst.modrm) == modrm_rm(inst.modrm)) {
                 uint8_t reg = modrm_reg(inst.modrm);
                 if (chacha20_random(rng) % 2) {
-                    // sub reg, reg
                     code[offset] = 0x29;
                 } else {
-                    // mov reg, 0
                     code[offset] = 0xB8 + reg;
                     if (offset + 5 <= size) {
                         memset(code + offset + 1, 0, 4);
@@ -1120,7 +1083,6 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                     }
                 }
             }
-            // mov reg, 0 <-> xor reg, reg <-> and reg, 0
             else if ((inst.opcode[0] & 0xF8) == 0xB8 && inst.imm == 0) {
                 uint8_t reg = inst.opcode[0] & 0x7;
                 switch(chacha20_random(rng) % 3) {
@@ -1128,7 +1090,7 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                         code[offset] = 0x31;
                         code[offset+1] = 0xC0 | (reg << 3) | reg;
                         break;
-                    case 1: // and reg, 0
+                    case 1:
                         code[offset] = 0x83;
                         code[offset+1] = 0xE0 | reg;
                         code[offset+2] = 0x00;
@@ -1149,7 +1111,6 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
             else if (inst.opcode[0] == 0x83 && inst.has_modrm && inst.raw[2] == 0x01) {
                 uint8_t reg = modrm_rm(inst.modrm);
                 if (chacha20_random(rng) % 2) {
-                    // inc reg
                     code[offset] = 0x48 + reg;
                     if (offset + 1 < size && inst.len > 1) {
                         size_t fill_len = (inst.len - 1 < size - offset - 1) ? inst.len - 1 : size - offset - 1;
@@ -1158,7 +1119,6 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                         }
                     }
                 } else {
-                    // lea reg, [reg+1]
                     if (offset + 4 <= size) {
                         code[offset] = 0x48;
                         code[offset+1] = 0x8D;
@@ -1210,7 +1170,7 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                             }
                         }
                         break;
-                    case 2: // add reg, 1 (alternative)
+                    case 2: 
                         if (offset + 3 <= size) {
                             code[offset] = 0x48;
                             code[offset+1] = 0x01;
@@ -1258,7 +1218,6 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                         // cmp reg, reg
                         code[offset] = 0x39;
                     } else {
-                        // and reg, reg (discard result)
                         code[offset] = 0x21;
                     }
                     if (!it_op(code + offset)) {
@@ -1271,7 +1230,6 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
             else if ((inst.opcode[0] & 0xF8) == 0x50) {
                 uint8_t reg = inst.opcode[0] & 0x07;
                 if (chacha20_random(rng) % 2) {
-                    // pop reg
                     code[offset] = 0x58 | reg;
                 } else {
                     // sub rsp,8; mov [rsp],reg
@@ -1315,16 +1273,16 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                 // Make space
                 memmove(code + offset + opq_len + junk_len, code + offset, size - offset - opq_len - junk_len);
                 
-                // Insert dynamic opaque predicate
+                // Insert  opaque predicate
                 memcpy(code + offset, opq_buf, opq_len);
                 
-                // Insert dynamic junk
+                // Insert  junk
                 memcpy(code + offset + opq_len, junk_buf, junk_len);
                 
                 offset += opq_len + junk_len;
                 mutated = true;
                 if (log) {
-                    logme(log, offset - opq_len - junk_len, opq_len + junk_len, MUT_PRED, gen, "dynamic opaque+junk");
+                    logme(log, offset - opq_len - junk_len, opq_len + junk_len, MUT_PRED, gen, " opaque+junk");
                 }
             }
         }
@@ -1341,7 +1299,7 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                 offset += junk_len;
                 mutated = true;
                 if (log) {
-                    logme(log, offset - junk_len, junk_len, MUT_DEAD, gen, "dynamic dead code");
+                    logme(log, offset - junk_len, junk_len, MUT_DEAD, gen, " dead code");
                 }
             }
         }
@@ -1388,7 +1346,7 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                         *(uint32_t*)(code + offset + 4) = (uint32_t)inst.imm;
                     }
                     break;
-                case 1: // mov reg, -1; and reg, ~(imm-1); add reg, imm
+                case 1: 
                     if (offset + 18 <= size) {
                         code[offset] = 0x48;
                         code[offset+1] = 0xC7;
@@ -1402,7 +1360,7 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                         *(uint32_t*)(code + offset + 15) = (uint32_t)inst.imm;
                     }
                     break;
-                case 2: // lea reg, [rip + imm]
+                case 2: 
                     if (offset + 7 <= size) {
                         code[offset] = 0x48;
                         code[offset+1] = 0x8D;
@@ -1497,7 +1455,7 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
 
 #if defined(ARCH_ARM)
 static uint8_t random_arm_reg(chacha_state_t *rng) {
-    return chacha20_random(rng) % 31; // X0-X30 (avoid XZR, SP, LR, PC)
+    return chacha20_random(rng) % 31;
 }
 
 static void update_arm_liveness(liveness_state_t *state, size_t offset, const arm64_inst_t *inst) {
@@ -1653,7 +1611,6 @@ static void arm_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                     *(uint32_t*)(code + offset) = original;
                 }
             }
-            // ADD reg, reg, 0 <-> MOV reg, reg
             else if (inst.type == ARM_OP_ADD && inst.imm == 0) {
                 if (chacha20_random(rng) % 2) {
                     // MOV reg, reg
@@ -1669,7 +1626,6 @@ static void arm_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                     *(uint32_t*)(code + offset) = original;
                 }
             }
-            // SUB reg, reg, 0 <-> MOV reg, reg
             else if (inst.type == ARM_OP_SUB && inst.imm == 0) {
                 if (chacha20_random(rng) % 2) {
                     // MOV reg, reg
@@ -1685,10 +1641,8 @@ static void arm_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                     *(uint32_t*)(code + offset) = original;
                 }
             }
-            // AND reg, reg, -1 <-> MOV reg, reg
             else if (inst.type == ARM_OP_AND && inst.imm == 0xFFF) {
                 if (chacha20_random(rng) % 2) {
-                    // MOV reg, reg
                     mutated = 0xAA0003E0 | (inst.rd) | (inst.rn << 16);
                 }
                 *(uint32_t*)(code + offset) = mutated;
@@ -1773,7 +1727,7 @@ static void arm_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                 memcpy(code + offset + opq_len, junk_buf, junk_len);
                 
                 if (log) {
-                    logme(log, offset, opq_len + junk_len, MUT_PRED, gen, "dynamic arm opaque+junk");
+                    logme(log, offset, opq_len + junk_len, MUT_PRED, gen, " arm opaque+junk");
                 }
                 offset += opq_len + junk_len;
                 continue;
@@ -1790,7 +1744,7 @@ static void arm_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                 memcpy(code + offset, junk_buf, junk_len);
                 
                 if (log) {
-                    logme(log, offset, junk_len, MUT_DEAD, gen, "dynamic arm junk");
+                    logme(log, offset, junk_len, MUT_DEAD, gen, " arm junk");
                 }
                 offset += junk_len;
                 continue;
@@ -1909,14 +1863,13 @@ __attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, cha
         dump(&mut_log);
     }
 
-    // Post-mutation: check all jump/call targets are instruction-aligned
+    // Post-mutation
 #if defined(ARCH_X86)
     int bad_target = 0;
     for (size_t off = 0; off < size;) {
     x86_inst_t inst;
     if (!decode_x86_withme(code + off, size - off, 0, &inst, NULL) || !inst.valid || inst.len == 0) break;
     if (inst.has_modrm && (inst.opcode[0] >= 0x88 && inst.opcode[0] <= 0x8B)) {
-        // Check if the base register is rax, rcx, etc.
         uint8_t base = inst.modrm & 0x7;
         if (base == 0 /* rax */ || base == 1 /* rcx */) {
                 uint8_t orig_modrm = inst.modrm;
@@ -1938,15 +1891,15 @@ __attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, cha
                 }
                 if (!substituted) {
                     static const uint8_t junk_pool[][6] = {
-                        {0x90}, // NOP
+                        {0x90},
                         {0x66, 0x90}, // xchg ax, ax
-                        {0x48, 0x89, 0xC0}, // mov rax, rax
+                        {0x48, 0x89, 0xC0},
                         {0x48, 0x31, 0xC0}, // xor rax, rax
-                        {0x48, 0x83, 0xC0, 0x00}, // add rax, 0
+                        {0x48, 0x83, 0xC0, 0x00},
                         {0x48, 0x39, 0xC0}, // cmp rax, rax
-                        {0xF3, 0x90}, // pause
+                        {0xF3, 0x90},
                         {0x50, 0x58}, // push rax; pop rax
-                        {0x48, 0x8D, 0x00}, // lea rax, [rax]
+                        {0x48, 0x8D, 0x00},
                         {0x48, 0x87, 0xC9, 0x48, 0x87, 0xD2}, // xchg rcx, rcx; xchg rdx, rdx
                     };
                     static const size_t junk_lens[] = {1,2,3,3,4,3,2,2,3,6};
@@ -1959,7 +1912,6 @@ __attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, cha
                     if (inst.len > patch_len) {
                         memset(code + off + patch_len, 0x90, inst.len - patch_len); // pad with NOPs
                     }
-                    DBG("[ADV] Patched with random junk at 0x%zx (%zu)", off, idx);
     }
     off += inst.len;
                 continue;
