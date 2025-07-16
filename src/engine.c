@@ -17,75 +17,6 @@ typedef struct {
     bool falg_wr; 
 } x86_shit;
 
-static void x86_operands(const x86_inst_t *inst, x86_shit *info) {
-    memset(info, 0, sizeof(*info));
-    if (inst->has_modrm) {
-        uint8_t reg = modrm_reg(inst->modrm);
-        uint8_t rm = modrm_rm(inst->modrm);
-        if (inst->opcode[0] == 0x89) {
-            info->rd_reegs[info->regs_rd++] = reg;
-            info->wr_reegs[info->regs_wr++] = rm;
-        }
-        else if (inst->opcode[0] == 0x8B) {
-            info->rd_reegs[info->regs_rd++] = rm;
-            info->wr_reegs[info->regs_wr++] = reg;
-        }
-        else if (inst->opcode[0] == 0x01 || inst->opcode[0] == 0x03 ||
-                 inst->opcode[0] == 0x29 || inst->opcode[0] == 0x2B ||
-                 inst->opcode[0] == 0x21 || inst->opcode[0] == 0x23 ||
-                 inst->opcode[0] == 0x09 || inst->opcode[0] == 0x0B ||
-                 inst->opcode[0] == 0x31 || inst->opcode[0] == 0x33 ||
-                 inst->opcode[0] == 0x39 || inst->opcode[0] == 0x3B ||
-                 inst->opcode[0] == 0x85 || inst->opcode[0] == 0x87) {
-            info->rd_reegs[info->regs_rd++] = reg;
-            info->rd_reegs[info->regs_rd++] = rm;
-            info->wr_reegs[info->regs_wr++] = reg;
-            info->falg_wr = true;
-        }
-        else if (inst->opcode[0] == 0x8D) {
-            info->rd_reegs[info->regs_rd++] = rm;
-            info->wr_reegs[info->regs_wr++] = reg;
-        }
-        else if (inst->opcode[0] == 0x87) {
-            info->rd_reegs[info->regs_rd++] = reg;
-            info->rd_reegs[info->regs_rd++] = rm;
-            info->wr_reegs[info->regs_wr++] = reg;
-            info->wr_reegs[info->regs_wr++] = rm;
-        }
-        if (inst->disp_size > 0 || inst->has_sib) {
-            info->mem_rd = true;
-            if (inst->opcode[0] == 0x89 || inst->opcode[0] == 0xC7) info->mem_wr = true;
-        }
-    }
-    if (inst->opcode[0] >= 0xB8 && inst->opcode[0] <= 0xBF) {
-        info->wr_reegs[info->regs_wr++] = inst->opcode[0] - 0xB8;
-    }
-    if (inst->opcode[0] == 0x50 || inst->opcode[0] == 0x58) {
-        uint8_t reg = inst->opcode[0] & 0x7;
-        if ((inst->opcode[0] & 0xF8) == 0x50) info->rd_reegs[info->regs_rd++] = reg;
-        else info->wr_reegs[info->regs_wr++] = reg;
-    }
-    if (inst->is_control_flow) info->flag_rd = true;
-}
-#endif
-
-static const struct {
-    uint8_t orgi_op; 
-    uint8_t clos_op;
-    const char *desc;
-} x86_tb[] = {
-    {0x31, 0x29, "xor->sub (zero reg)"}, 
-    {0x29, 0x31, "sub->xor (zero reg)"},
-    {0x31, 0x33, "xor->xor (swap)"},
-    {0x89, 0x8B, "mov r/m,r <-> mov r,r/m"},
-    {0x8B, 0x89, "mov r,r/m <-> mov r/m,r"},
-    {0x90, 0x87, "nop <-> xchg eax,eax"},
-    {0x87, 0x90, "xchg eax,eax <-> nop"},
-    {0x50, 0xFF, "push reg <-> push via FF / pop via 8F"},
-
-};
-static const size_t x86_tb_size = sizeof(x86_tb)/sizeof(x86_tb[0]);
-
 static const struct {
     uint32_t orgi_op;
     uint32_t clos_op;
@@ -391,6 +322,74 @@ __attribute__((always_inline)) inline void ic_opaque_x86(uint8_t *buf, size_t *l
     }
 }
 
+static void x86_operands(const x86_inst_t *inst, x86_shit *info) {
+    memset(info, 0, sizeof(*info));
+    if (inst->has_modrm) {
+        uint8_t reg = modrm_reg(inst->modrm);
+        uint8_t rm = modrm_rm(inst->modrm);
+        if (inst->opcode[0] == 0x89) {
+            info->rd_reegs[info->regs_rd++] = reg;
+            info->wr_reegs[info->regs_wr++] = rm;
+        }
+        else if (inst->opcode[0] == 0x8B) {
+            info->rd_reegs[info->regs_rd++] = rm;
+            info->wr_reegs[info->regs_wr++] = reg;
+        }
+        else if (inst->opcode[0] == 0x01 || inst->opcode[0] == 0x03 ||
+                 inst->opcode[0] == 0x29 || inst->opcode[0] == 0x2B ||
+                 inst->opcode[0] == 0x21 || inst->opcode[0] == 0x23 ||
+                 inst->opcode[0] == 0x09 || inst->opcode[0] == 0x0B ||
+                 inst->opcode[0] == 0x31 || inst->opcode[0] == 0x33 ||
+                 inst->opcode[0] == 0x39 || inst->opcode[0] == 0x3B ||
+                 inst->opcode[0] == 0x85 || inst->opcode[0] == 0x87) {
+            info->rd_reegs[info->regs_rd++] = reg;
+            info->rd_reegs[info->regs_rd++] = rm;
+            info->wr_reegs[info->regs_wr++] = reg;
+            info->falg_wr = true;
+        }
+        else if (inst->opcode[0] == 0x8D) {
+            info->rd_reegs[info->regs_rd++] = rm;
+            info->wr_reegs[info->regs_wr++] = reg;
+        }
+        else if (inst->opcode[0] == 0x87) {
+            info->rd_reegs[info->regs_rd++] = reg;
+            info->rd_reegs[info->regs_rd++] = rm;
+            info->wr_reegs[info->regs_wr++] = reg;
+            info->wr_reegs[info->regs_wr++] = rm;
+        }
+        if (inst->disp_size > 0 || inst->has_sib) {
+            info->mem_rd = true;
+            if (inst->opcode[0] == 0x89 || inst->opcode[0] == 0xC7) info->mem_wr = true;
+        }
+    }
+    if (inst->opcode[0] >= 0xB8 && inst->opcode[0] <= 0xBF) {
+        info->wr_reegs[info->regs_wr++] = inst->opcode[0] - 0xB8;
+    }
+    if (inst->opcode[0] == 0x50 || inst->opcode[0] == 0x58) {
+        uint8_t reg = inst->opcode[0] & 0x7;
+        if ((inst->opcode[0] & 0xF8) == 0x50) info->rd_reegs[info->regs_rd++] = reg;
+        else info->wr_reegs[info->regs_wr++] = reg;
+    }
+    if (inst->is_control_flow) info->flag_rd = true;
+}
+#endif
+
+static const struct {
+    uint8_t orgi_op; 
+    uint8_t clos_op;
+    const char *desc;
+} x86_tb[] = {
+    {0x31, 0x29, "xor->sub (zero reg)"}, 
+    {0x29, 0x31, "sub->xor (zero reg)"},
+    {0x31, 0x33, "xor->xor (swap)"},
+    {0x89, 0x8B, "mov r/m,r <-> mov r,r/m"},
+    {0x8B, 0x89, "mov r,r/m <-> mov r/m,r"},
+    {0x90, 0x87, "nop <-> xchg eax,eax"},
+    {0x87, 0x90, "xchg eax,eax <-> nop"},
+    {0x50, 0xFF, "push reg <-> push via FF / pop via 8F"},
+
+};
+static const size_t x86_tb_size = sizeof(x86_tb)/sizeof(x86_tb[0]);
 
 __attribute__((always_inline)) inline void ic_opaque_arm(uint8_t *buf, size_t *len, uint32_t value, chacha_state_t *rng) {
     uint8_t reg1 = chacha20_random(rng) % 31; // avoid XZR
@@ -649,7 +648,7 @@ static void cfg_shit(uint8_t *code, size_t size, cfg_t *cfg) {
     cfg->num_blocks = 0;
     
     size_t offset = 0;
-    size_t current_block_start = 0;
+    size_t end = 0;
     bool in_block = false;
     
     while (offset < size) {
@@ -685,13 +684,13 @@ static void cfg_shit(uint8_t *code, size_t size, cfg_t *cfg) {
 #endif
 
         if (!in_block) {
-            current_block_start = offset;
+            end = offset;
             in_block = true;
         }
         
         if (is_control_flow) {
-            // End current block
-            cfg->blocks[cfg->num_blocks].start = current_block_start;
+            // End
+            cfg->blocks[cfg->num_blocks].start = end;
             cfg->blocks[cfg->num_blocks].end = offset + len;
             cfg->blocks[cfg->num_blocks].id = cfg->num_blocks;
             cfg->num_blocks++;
@@ -702,7 +701,7 @@ static void cfg_shit(uint8_t *code, size_t size, cfg_t *cfg) {
     }
     
     if (in_block) {
-        cfg->blocks[cfg->num_blocks].start = current_block_start;
+        cfg->blocks[cfg->num_blocks].start = end;
         cfg->blocks[cfg->num_blocks].end = offset;
         cfg->blocks[cfg->num_blocks].id = cfg->num_blocks;
         cfg->num_blocks++;
@@ -1270,13 +1269,8 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
             genmesomejunk(junk_buf, &junk_len, rng);
             
             if (offset + inst.len + opq_len + junk_len <= size) {
-                // Make space
                 memmove(code + offset + opq_len + junk_len, code + offset, size - offset - opq_len - junk_len);
-                
-                // Insert  opaque predicate
                 memcpy(code + offset, opq_buf, opq_len);
-                
-                // Insert  junk
                 memcpy(code + offset + opq_len, junk_buf, junk_len);
                 
                 offset += opq_len + junk_len;
@@ -1305,7 +1299,6 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
         }
         
         if (!mutated && (chacha20_random(rng) % 10) < (mutation_intensity / 3)) {
-            // Just a simple MOV r/m, r -> PUSH r; MOV [esp], r; POP r/m will do 
             if (inst.opcode[0] == 0x89 && inst.has_modrm && inst.len >= 6) {
                 uint8_t split[6] = {
                     0x50 | (inst.modrm & 7), // PUSH r
@@ -1337,7 +1330,7 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
         
         if (!mutated && (inst.opcode[0] & 0xF8) == 0xB8 && inst.imm != 0 && inst.len >= 5) {
             switch(chacha20_random(rng) % 4) {
-                case 0: // xor reg, reg; add reg, imm
+                case 0: 
                     if (offset + 8 <= size) {
                         code[offset] = 0x31;
                         code[offset+1] = 0xC0 | (inst.opcode[0] & 0x7);
@@ -1439,7 +1432,7 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
         cfg_shit(code, size, &cfg);
         flattenme(code, size, &cfg, rng);
         if (log) {
-            logme(log, 0, size, MUT_FLATTEN, gen, "control flow flattening");
+            logme(log, 0, size, MUT_FLATTEN, gen, "Flattening");
         }
         free(cfg.blocks);
     }
@@ -1447,7 +1440,7 @@ static void x86_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
     if (gen > 3 && (chacha20_random(rng) % 10) < (gen > 10 ? 5 : 2)) {
         blocks_x86(code, size, rng);
         if (log) {
-            logme(log, 0, size, MUT_REORDER, gen, "block reordering");
+            logme(log, 0, size, MUT_REORDER, gen, "Reordering");
         }
     }
 }
@@ -1595,7 +1588,6 @@ static void arm_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
         }
         
         if (!changed) {
-            // MOV reg, reg <-> ORR reg, xzr, reg
             if (inst.type == ARM_OP_MOV && inst.rd == inst.rm) {
                 if (chacha20_random(rng) % 2) {
                     // ORR reg, xzr, reg
@@ -1659,11 +1651,11 @@ static void arm_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
         
         if (!changed && inst.imm != 0 && inst.imm_size > 0) {
             switch(chacha20_random(rng) % 3) {
-                case 0: // MOVZ + MOVK
+                case 0: 
                     if (inst.imm <= 0xFFFF) {
                         uint32_t new_code[2] = {
-                            0x52800000 | (inst.rd) | ((inst.imm & 0xFFFF) << 5), // MOVZ
-                            0x72800000 | (inst.rd) | ((inst.imm & 0xFFFF) << 5)  // MOVK
+                            0x52800000 | (inst.rd) | ((inst.imm & 0xFFFF) << 5), 
+                            0x72800000 | (inst.rd) | ((inst.imm & 0xFFFF) << 5)  
                         };
                         if (offset + 8 <= size) {
                             memcpy(code + offset, new_code, 8);
@@ -1679,8 +1671,8 @@ static void arm_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                     if (inst.imm <= 0xFFF) {
                         uint32_t half = inst.imm / 2;
                         uint32_t new_code[2] = {
-                            0x91000000 | (inst.rd) | (inst.rd << 5) | (half << 10), // ADD reg, reg, half
-                            0x91000000 | (inst.rd) | (inst.rd << 5) | ((inst.imm - half) << 10) // ADD reg, reg, remainder
+                            0x91000000 | (inst.rd) | (inst.rd << 5) | (half << 10), 
+                            0x91000000 | (inst.rd) | (inst.rd << 5) | ((inst.imm - half) << 10) 
                         };
                         if (offset + 8 <= size) {
                             memcpy(code + offset, new_code, 8);
@@ -1692,11 +1684,11 @@ static void arm_semantic(uint8_t *code, size_t size, chacha_state_t *rng, unsign
                         }
                     }
                     break;
-                case 2: // XOR with decomposed immediate
+                case 2:
                     if (inst.imm <= 0xFFF) {
                         uint32_t new_code[2] = {
-                            0xD2800000 | (inst.rd) | (0xFFFF << 5), // MOV reg, -1
-                            0xCA000000 | (inst.rd) | (inst.rd << 5) | (inst.rd << 16) | (inst.imm << 10) // EOR reg, reg, imm
+                            0xD2800000 | (inst.rd) | (0xFFFF << 5),
+                            0xCA000000 | (inst.rd) | (inst.rd << 5) | (inst.rd << 16) | (inst.imm << 10)
                         };
                         if (offset + 8 <= size) {
                             memcpy(code + offset, new_code, 8);
@@ -3241,11 +3233,9 @@ static void shit_recursive_x86_inner(const uint8_t *code, size_t size, rec_cfg_t
             shit_recursive_x86_inner(code, size, cfg, target);
             // fallthrough to next
         } else if (inst.opcode[0] == 0xFF && (inst.modrm & 0x38) == 0x10) { // call [mem/reg]
-            // Indirect call, treat as exit
             rec_cfg_add_block(cfg, addr, off + inst.len, true);
             return;
         } else if (inst.opcode[0] == 0xFF && (inst.modrm & 0x38) == 0x20) { // jmp [mem/reg]
-            // Indirect jmp, treat as exit
             rec_cfg_add_block(cfg, addr, off + inst.len, true);
             return;
         }
