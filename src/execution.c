@@ -107,15 +107,6 @@ int boot(uint8_t *dsec, size_t ds, chacha_state_t *rng) {
         if (len > entry_protect) {
             mut_sh3ll(init_buffer + entry_protect, len - entry_protect, rng, hdr->count);
         }
-#if defined(ARCH_X86)
-        for (size_t i = len; i + 3 <= PAGE_SIZE; i += 3) {
-            memcpy(init_buffer + i, x86_junk[chacha20_random(rng) % 20], 3);
-        }
-#elif defined(ARCH_ARM)
-        for (size_t i = len; i + 4 <= PAGE_SIZE; i += 4) {
-            memcpy(init_buffer + i, arm_junk[chacha20_random(rng) % 15], 4);
-        }
-#endif
         if (getentropy(hdr->key, KEY_SIZE) != 0 || getentropy(hdr->iv, kCCBlockSizeAES128) != 0) { panic(); }
         cipher(hdr->key, hdr->iv, init_buffer, payload, PAGE_SIZE);
         CC_SHA256(payload, PAGE_SIZE, hdr->hash);
