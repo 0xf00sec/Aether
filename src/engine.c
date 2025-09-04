@@ -198,51 +198,6 @@ __attribute__((always_inline)) inline size_t snap_instr_len(const uint8_t *code,
     return 0;
 #endif
 }
-
-#if defined(ARCH_X86)
-const uint8_t x86_junk[][16] = {
-    {0x48, 0x89, 0xC0},                    
-    {0x48, 0x83, 0xE0, 0x00},              
-    {0x48, 0x83, 0xC8, 0xFF},              
-    {0x48, 0x31, 0xC0},                    
-    {0x90, 0x90, 0x90, 0x90},             
-    {0x48, 0x87, 0xC9, 0x48, 0x87, 0xD2},   // xchg rcx, rcx; xchg rdx, rdx
-    {0x48, 0x8D, 0x00},                    
-    {0x48, 0x39, 0xC0},                     // cmp rax, rax
-    {0xF3, 0x90},                         
-    {0x48, 0xFF, 0xC0},                  
-    {0x48, 0x89, 0xD1, 0x48, 0x89, 0xD1},   // mov rcx, rdx; mov rcx, rdx
-    {0x48, 0x01, 0xC0, 0x48, 0x29, 0xC0},  
-    {0x48, 0x8B, 0xC0, 0x48, 0x8B, 0xD8},    
-    {0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00},    // nop word ptr [rax+rax*1+0x0]
-    {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00}, // nop dword ptr [rax+0x0]
-    {0x48, 0x83, 0xEC, 0x08, 0x48, 0x83, 0xC4, 0x08}, // sub rsp,8; add rsp,8
-    {0x50, 0x58},                           // push rax; pop rax
-    {0x9C, 0x9D},                           
-    {0xEB, 0x00},                        
-    {0x74, 0xFE}                           
-};
-#elif defined(ARCH_ARM)
-const uint8_t arm_junk[][8] = {
-    {0x1F, 0x20, 0x03, 0xD5},              
-    {0xE0, 0x03, 0x00, 0xAA},              
-    {0xFF, 0x03, 0x00, 0xD1},              
-    {0x1F, 0x20, 0x03, 0xD5, 0x1F, 0x20, 0x03, 0xD5},
-    {0x1F, 0x00, 0x00, 0xAB},              
-    {0x1F, 0x00, 0x00, 0xEB},              
-    {0x1F, 0x00, 0x00, 0xCB},               
-    {0x1F, 0x00, 0x00, 0x8B},               
-    {0x1F, 0x00, 0x00, 0x71},              
-    {0x1F, 0x00, 0x00, 0xB1},              
-    {0x1F, 0x00, 0x00, 0xF1},              
-    {0x1F, 0x00, 0x00, 0x91},               
-    {0xE0, 0x03, 0x00, 0xAA, 0xE0, 0x03, 0x00, 0xAA},
-    {0x1F, 0x00, 0x00, 0xD5},               
-    {0x1F, 0x20, 0x03, 0xD5, 0x1F, 0x20, 0x03, 0xD5} 
-};
-#endif
-
-
 __attribute__((always_inline)) inline void ic_opaque_x86(uint8_t *buf, size_t *len, uint32_t value, chacha_state_t *rng) {
     uint8_t reg1 = chacha20_random(rng) % 8;
     uint8_t reg2 = chacha20_random(rng) % 8;
@@ -1881,30 +1836,6 @@ __attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, cha
                         }
                     }
                 }
-                if (!substituted) {
-                    static const uint8_t junk_pool[][6] = {
-                        {0x90},
-                        {0x66, 0x90}, // xchg ax, ax
-                        {0x48, 0x89, 0xC0},
-                        {0x48, 0x31, 0xC0}, // xor rax, rax
-                        {0x48, 0x83, 0xC0, 0x00},
-                        {0x48, 0x39, 0xC0}, // cmp rax, rax
-                        {0xF3, 0x90},
-                        {0x50, 0x58}, // push rax; pop rax
-                        {0x48, 0x8D, 0x00},
-                        {0x48, 0x87, 0xC9, 0x48, 0x87, 0xD2}, // xchg rcx, rcx; xchg rdx, rdx
-                    };
-                    static const size_t junk_lens[] = {1,2,3,3,4,3,2,2,3,6};
-                    size_t pool_size = sizeof(junk_pool)/sizeof(junk_pool[0]);
-                    size_t idx = chacha20_random(rng) % pool_size;
-                    const uint8_t* junk = junk_pool[idx];
-                    size_t junk_len = junk_lens[idx];
-                    size_t patch_len = inst.len < junk_len ? inst.len : junk_len;
-                    memcpy(code + off, junk, patch_len);
-                    if (inst.len > patch_len) {
-                        memset(code + off + patch_len, 0x90, inst.len - patch_len); // pad with NOPs
-                    }
-    }
     off += inst.len;
                 continue;
         }
