@@ -71,7 +71,6 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
 
-      
     if ((insn & 0xFF000010u) == 0x54000000u) {
         const uint32_t imm19 = bits(insn, 23, 5);
         const int64_t off    = sxt64(imm19, 19) << 2;
@@ -84,7 +83,6 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
 
-      
     if ((insn & 0xFFFFFC1Fu) == 0xD61F0000u) {   
         out->type            = ARM_OP_BRANCH;
         out->rn              = rn(insn);
@@ -230,9 +228,6 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         out->is_64bit = (size == 3);
         return true;
     }
-
-      
-
       
     if ((insn & 0xFFE0001Fu) == 0xD4000001u) {   
         out->type          = ARM_OP_SVC;
