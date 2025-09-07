@@ -7,8 +7,8 @@ NC     := \033[0m
 
 # Compiler 
 CC       := gcc
-CFLAGS   := -Wall -Wextra -Iinc -Iinclude -w
-LDFLAGS  := -lcurl -lssl -lcrypto -lz -framework CoreFoundation -framework Security -framework OpenDirectory
+CFLAGS   := -Wall -Wextra -Iinc -Iinclude -w -fstack-protector-strong -fstack-protector-all -fsanitize=address,undefined -fno-omit-frame-pointer
+LDFLAGS  := -framework CoreFoundation -framework Security -framework OpenDirectory
 
 # Dir
 SRC_DIR  := src
@@ -33,17 +33,7 @@ endif
 SRCS := $(SRC_DIR)/engine.c \
         $(SRC_DIR)/prng.c \
         $(SRC_DIR)/clean.c \
-        $(SRC_DIR)/crypto.c \
-        $(SRC_DIR)/strings.c \
-        $(SRC_DIR)/tuer.c \
-        $(SRC_DIR)/header.c \
-        $(SRC_DIR)/overnout.c \
-        $(SRC_DIR)/execution.c \
-        $(SRC_DIR)/antidebug.c \
-        $(SRC_DIR)/antivirus.c \
-        $(SRC_DIR)/parasite.c \
-        $(SRC_DIR)/auth.c \
-        $(SRC_DIR)/wisp.c
+        $(SRC_DIR)/main.c \
 
 ifeq ($(ARCH),x86)
     SRCS += $(X86_DIR)/decoder_x86.c
