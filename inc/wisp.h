@@ -56,9 +56,7 @@ extern "C" {
 #include <CommonCrypto/CommonCrypto.h>
 #include <CommonCrypto/CommonDigest.h>
 
-// -----------------------------------------------------------------------------
 // macOS / Mach-O / Kernel / Core frameworks
-// -----------------------------------------------------------------------------
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <mach-o/getsect.h>
@@ -71,7 +69,7 @@ extern "C" {
 #include <Security/SecRandom.h>
 #include <libkern/OSCacheControl.h>
 
-// #include <capstone/capstone.h>
+#include <capstone/capstone.h>
 
 // Architecture specific intrinsics
 #ifdef __x86_64__
@@ -79,12 +77,20 @@ extern "C" {
 #endif
 
 // Constants 
-#define STREAM_SIZE 64      
+#define STRM__ 64       
+#define _CVZ 16
 
-// Debug macros
+#define NOFFSET__ UINT64_MAX
+#define _CAPZ 256
+#define PAD_ 8
+#define _BEG 0.3f
+#define _FIN 0.7f
+#define _ZMAX 65536
+#define _CAP(sz)  ((sz) / 100 + 1)
+
+// macros
 #ifdef TEST
 #  define DBG(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
-#  define DEBUG_MUTATIONS 1
 #else
 #  define DBG(...) ((void)0)
 #endif
@@ -123,8 +129,10 @@ static const size_t arm_equiv = 0;
 
 #endif // ARCH_X86
 
-// Fundamental small types
+// small types
 typedef enum { OP_NONE, OP_REG, OP_MEM, OP_IMM, OP_REL } op_type_t;
+typedef enum { ST_NOP = 0, ST_ALU, ST_BIT, ST_MOV, ST_CMP, ST_FLOW, ST_JCC, ST_STK, ST_FLAG, ST_MEM, ST_SYS } sem_type_t;
+
 
 // ARM64 specific enums / types
 typedef enum {
@@ -141,7 +149,12 @@ typedef enum {
     ARM_REG_X24, ARM_REG_X25, ARM_REG_X26, ARM_REG_X27, ARM_REG_X28, ARM_REG_X29, ARM_REG_X30, ARM_REG_XZR
 } arm_reg_t;
 
-// Operands and instruction representations
+typedef enum { MUT_SUB, MUT_EQUIV, MUT_PRED, MUT_DEAD, MUT_SPLIT, MUT_OBFUSC, MUT_FLATTEN, MUT_REORDER, MUT_JUNK, MUT_MERGE } mutx_type_t;
+typedef uint8_t (*memread_fn)(uintptr_t);
+//typedef int (*sysctl_fn)(int*, u_int, void*, size_t*, void*, size_t);
+extern struct mach_header_64 _mh_execute_header;
+
+// Operands and instruction
 typedef struct {
     op_type_t type;
     uint8_t size;
@@ -226,21 +239,13 @@ typedef struct {
     size_t code_size;
 } rec_flowmap;
 
-typedef uint8_t (*memread_fn)(uintptr_t);
-typedef int (*sysctl_fn)(int*, u_int, void*, size_t*, void*, size_t);
-
-typedef enum { WIPE_ZERO, WIPE_ONE, WIPE_RANDOM, WIPE_CUSTOM } wipe_pattern_t;
-typedef struct { int passes; wipe_pattern_t *patterns; unsigned char custom; } wipe_conf_t;
-
 typedef struct {
     uint32_t key[8];       
     uint32_t iv[3];        
-    uint32_t stream[STREAM_SIZE];          
+    uint32_t stream[STRM__];          
     size_t position;              
     uint32_t counter;           
 } chacha_state_t;
-
-typedef enum { MUT_SUB, MUT_EQUIV, MUT_PRED, MUT_DEAD, MUT_SPLIT, MUT_OBFUSC, MUT_FLATTEN, MUT_REORDER, MUT_JUNK, MUT_MERGE } mutx_type_t;
 
 typedef struct {
     size_t offset;
@@ -251,24 +256,27 @@ typedef struct {
 } mutx_entry_t;
 
 typedef struct { mutx_entry_t *entries; size_t count, cap; } muttt_t;
-
 typedef struct { uint8_t reg; size_t def_offset, last_use; bool iz_live, iz_vol; } reg_liveness_t;
 typedef struct { reg_liveness_t regs[16]; size_t num_regs; } liveness_state_t;
 
 typedef struct { size_t start, end, id, successors[4], num_successors; bool is_exit; } blocknode;
 typedef struct { blocknode *blocks; size_t num_blocks, cap_blocks, entry_block, exit_block; } flowmap;
-
 typedef struct { size_t *dominators, num_doms, *dominated, num_dominated; } dom_info_t;
 typedef struct { size_t header, *body, body_size, *exits, exits_size; } loop_info_t;
 
 typedef struct { size_t caller, callee, call_site; } call_edge_t;
 typedef struct { call_edge_t *edges; size_t num_edges, *functions, num_functions; } call_graph_t;
-
 typedef struct { size_t off, len; uint8_t type; bool cf, valid; uint8_t raw[16]; } instr_info_t;
 
-typedef enum { ST_NOP = 0, ST_ALU, ST_BIT, ST_MOV, ST_CMP, ST_FLOW, ST_JCC, ST_STK, ST_FLAG, ST_MEM, ST_SYS } sem_type_t;
 typedef struct { uint8_t type, size, reg; int64_t disp; uint64_t imm; bool izre, izwri; } m_operand_t;
 typedef struct { sem_type_t sem_type; m_operand_t ops[3]; uint8_t num_ops; bool f_out, f_in, m_out, m_in, stk_out, stk_in; uint8_t stk_adj; bool ring0, voll; } sem_meta_t;
+
+typedef struct {
+    uint64_t file_start;
+    uint64_t file_end;
+    uint64_t vm_start;
+    uint64_t vm_end;
+} text_section_t;
 
 typedef struct {
     const uint8_t *debug_code;
@@ -276,12 +284,46 @@ typedef struct {
     bool unsafe_mode;
 } engine_context_t;
 
+typedef struct {
+    uint64_t orig_va;
+    size_t len;
+    uint8_t *backup;
+} tramp_backup_t;
+
+typedef struct {
+    uint64_t start;
+    uint64_t end;
+} cave_t;
+
+typedef struct {
+    uint8_t *ogicode;
+    uint8_t *working_code;
+    size_t codesz;
+    size_t buffcap;
+    flowmap cfg;
+    rec_flowmap *rec_cfg;
+    muttt_t muttation;
+    uint64_t ranges[_CAPZ * 2];
+    size_t numcheck;
+    chacha_state_t rng;
+    bool is_shellcode;
+    void *morph_ptr;
+    size_t morph_size;
+    uint64_t vm_base;
+    uint64_t text_vm_start;
+    tramp_backup_t *tramps;
+    size_t tramps_cap;
+    size_t tramps_count;
+    int64_t text_slide;     // dyld slide for main image
+    struct mach_header_64 *hdr;
+    cave_t caves[_CVZ];
+    size_t num_caves;
+} context_t;
 
 void chacha20_block(const uint32_t *key, uint32_t counter, const uint32_t *nonce, uint32_t *out);
 void chacha20_init(chacha_state_t *rng, const uint8_t *seed, size_t len);
 uint32_t chacha20_random(chacha_state_t *);
 uint32_t rand_n(chacha_state_t *, uint32_t);
-void QR(uint32_t state[16], int a, int b, int c, int d);
 
 void mutate(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, engine_context_t *ectx);
 void mut_sh3ll(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, engine_context_t *ectx);
@@ -293,7 +335,6 @@ uint8_t jack_reg(const liveness_state_t *ls, uint8_t reg, size_t size, chacha_st
 void spew_trash(uint8_t *buf, size_t *len, chacha_state_t *rng);
 void freeme(muttt_t *m);
 bool sketch_flow(uint8_t *code, size_t size, flowmap *fm);
-bool is_shellcode_mode(const uint8_t *code, size_t size, const flowmap *fm);
 size_t decode_map(const uint8_t *code, size_t size, instr_info_t *out, size_t outcap);
 int chk_map(const instr_info_t *map, size_t maplen, size_t codesz);
 
@@ -305,6 +346,32 @@ void forge_ghost(uint8_t *buf, size_t *len, uint32_t seed, chacha_state_t *rng);
 bool is_chunk_ok(const uint8_t *chunk, size_t max_len);
 bool is_op_ok(const uint8_t *op);
 size_t snap_len(const uint8_t *buf, size_t maxlen);
+
+intptr_t img_slide(const struct mach_header_64 *hdr);
+uint64_t vmoffst(const struct mach_header_64 *hdr, uint64_t addr);
+
+bool text_sec(const struct mach_header_64 *hdr, text_section_t *out);
+bool mach_O(const uint8_t *code, size_t size);
+
+bool Ampbuff(context_t *ctx, size_t needed_size);
+bool tx_Init(context_t *ctx, const uint8_t *code, size_t size, struct mach_header_64 *hdr, uint64_t text_vm_start);
+void clear_tx(context_t *ctx);
+
+bool mOrph(context_t *ctx, unsigned generation, size_t max_size);
+bool apply_jnk(context_t *ctx, unsigned intensity, size_t max_size);
+bool jnk_fill(context_t *ctx, unsigned intensity);
+bool reg_mut(context_t *ctx, unsigned intensity);
+bool cave_it(context_t *ctx, uint64_t *cool, int *coolnum);
+bool clip_sz(context_t *ctx, size_t max_size);
+
+bool clear_mut(context_t *ctx);
+bool dsk_seg(context_t *ctx, size_t original_size);
+
+void crit_tap(struct mach_header_64 *hdr, uint64_t text_vm_start, 
+             uint64_t *ranges, size_t *num_ranges, size_t codesz);
+extern bool chk_prot(uint64_t offset, uint64_t *ranges, size_t num_ranges);
+
+bool dsk_mut(context_t *ctx, const char *binary_path, uint64_t file_start, size_t original_size);
 
 #if defined(ARCH_X86)
 bool decode_x86(const uint8_t *buf, uintptr_t pc, x86_inst_t *out, memread_fn memfn);
