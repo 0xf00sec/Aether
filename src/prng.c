@@ -4,7 +4,7 @@
 /*-------------------------------------------
 ///        ChaCha20 rng                      
 -------------------------------------------*/
- inline void QR(uint32_t state[16], int a, int b, int c, int d) {
+static inline void QR(uint32_t state[16], int a, int b, int c, int d) {
     state[a] += state[b]; state[d] ^= state[a]; state[d] = (state[d] << 16) | (state[d] >> 16);
     state[c] += state[d]; state[b] ^= state[c]; state[b] = (state[b] << 12) | (state[b] >> 20);
     state[a] += state[b]; state[d] ^= state[a]; state[d] = (state[d] << 8) | (state[d] >> 24);
@@ -39,7 +39,7 @@ void chacha20_block(const uint32_t *key, uint32_t counter, const uint32_t *nonce
 uint32_t chacha20_random(chacha_state_t *rng) {
     if (!rng) return 0;
 
-    if (rng->position >= STREAM_SIZE) {
+    if (rng->position >= STRM__) {
         chacha20_block(rng->key, rng->counter, rng->iv, (uint32_t *)rng->stream);
         rng->counter++;
         rng->position = 0;
@@ -72,7 +72,7 @@ void chacha20_init(chacha_state_t *rng, const uint8_t *seed, size_t len) {
     memcpy(rng->iv, ivh, sizeof(rng->iv));
 
     memset(rng->stream, 0, sizeof(rng->stream));
-    rng->position = STREAM_SIZE; 
+    rng->position = STRM__; 
 
     uint32_t ctr = 0;
     if (SecRandomCopyBytes(kSecRandomDefault, sizeof(ctr), &ctr) != 0) {
