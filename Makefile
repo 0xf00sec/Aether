@@ -8,7 +8,7 @@ NC     := \033[0m
 # Compiler 
 CC       := gcc
 CFLAGS   := -Wall -Wextra -Iinc -Iinclude -w -fstack-protector-strong -fstack-protector-all -fsanitize=address,undefined -fno-omit-frame-pointer
-LDFLAGS  := -framework CoreFoundation -framework Security -framework OpenDirectory
+LDFLAGS  := -framework CoreFoundation -framework Security -framework OpenDirectory -lcapstone
 
 # Dir
 SRC_DIR  := src
@@ -31,9 +31,9 @@ endif
 
 # Source 
 SRCS := $(SRC_DIR)/engine.c \
-        $(SRC_DIR)/prng.c \
         $(SRC_DIR)/clean.c \
-        $(SRC_DIR)/main.c \
+        $(SRC_DIR)/prng.c \
+        $(SRC_DIR)/mutator.c \
 
 ifeq ($(ARCH),x86)
     SRCS += $(X86_DIR)/decoder_x86.c
