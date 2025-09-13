@@ -1,7 +1,7 @@
 /*
  * F00's wisp - manual x86/arm64 decoder, mut8r, and Mach-O mangler
  *
- * - No unicorn, just raw decode_x86/arm64, all hand-rolled (Buggy as fuck)
+ * - raw decode_x86/arm64, all hand-rolled (Buggy as fuck)
  * - Mut8r: shuffles, swaps, and mangles code, keeps it runnin'
  * - CFG hacks: block reorder, flatten, dead/junk, reg liveness, all that
  * - Shellcode loader: decrypts, mut8s, runs, wipes after
