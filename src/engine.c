@@ -693,9 +693,11 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
             case 1: // JMP rel32 (opcode E9)
             case 2: // CALL rel32 (opcode E8)
                 new_disp = (int32_t)(new_tgt - (src + 5)); // 5 bytes for E9/E9 + rel32
-                if (src + 1 + sizeof(int32_t) <= buf_sz) {
-                    *(int32_t*)(nbuf + src + 1) = new_disp;
-                }
+            if (((uintptr_t)(nbuf + src + 1) & 3) == 0) {
+                *(int32_t*)(nbuf + src + 1) = new_disp;
+            } else {
+                memcpy(nbuf + src + 1, &new_disp, sizeof(new_disp));
+            }
                 break;
                 
             case 3: // Jcc rel8 (opcode 70-7F)
@@ -1724,311 +1726,71 @@ __attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, cha
     init_mut(&mut_log);
     boot_live(&liveness);
 
-    
     unsigned mutation_intensity = gen + 1;
     if (mutation_intensity > 20) mutation_intensity = 20;
-    
+
 #if defined(ARCH_X86)
     size_t offset = 0;
-    int changes = 0;
-    int semantic_mutations = 0;
-    
     while (offset < size) {
         x86_inst_t inst;
         if (!decode_x86_withme(code + offset, size - offset, 0, &inst, NULL) || !inst.valid || inst.len == 0 || offset + inst.len > size) {
             offset++;
             continue;
         }
-        
-        size_t original_offset = offset;
         scramble_x86(code + offset, inst.len, rng, gen, &mut_log, &liveness, mutation_intensity);
-        if (memcmp(original + original_offset, code + original_offset, inst.len) != 0) {
-            changes++;
-            semantic_mutations++;
-        }
-        
         offset += inst.len;
     }
-    
+
     if ((chacha20_random(rng) % 10) < (mutation_intensity / 2)) {
         flowmap cfg;
         sketch_flow(code, size, &cfg);
         flatline_flow(code, size, &cfg, rng);
         drop_mut(&mut_log, 0, size, MUT_FLATTEN, gen, "CF BS");
-        changes++;
-        DBG("[!] Flattening applied\n");
         free(cfg.blocks);
     }
-    
+
     if ((chacha20_random(rng) % 10) < (mutation_intensity / 3)) {
         shuffle_blocks(code, size, rng);
         drop_mut(&mut_log, 0, size, MUT_REORDER, gen, "Block reorder");
-        changes++;
-        DBG("[!] Block reordering applied\n");
     }
-    
-    
+
 #elif defined(ARCH_ARM)
     size_t offset = 0;
-    int changes = 0;
-    int semantic_mutations = 0;
-    
     while (offset + 4 <= size) {
         arm64_inst_t inst;
         if (!decode_arm64(code + offset, &inst) || !inst.valid) {
             offset += 4;
             continue;
         }
-        
-        size_t original_offset = offset;
         arm_semantic(code + offset, 4, rng, gen, &mut_log, &liveness, mutation_intensity);
-        if (memcmp(original + original_offset, code + original_offset, 4) != 0) {
-            changes++;
-            semantic_mutations++;
-        }
-        
         offset += 4;
     }
-    
+
     if (gen > 5 && (chacha20_random(rng) % 10) < (gen > 15 ? 8 : 3)) {
         flowmap cfg;
         sketch_flow(code, size, &cfg);
         fg_arm(code, size, &cfg, rng);
         drop_mut(&mut_log, 0, size, MUT_FLATTEN, gen, "arm control flow flattening");
-        changes++;
-        DBG("[!] ARM control flow flattening applied\n");
         free(cfg.blocks);
-    }
-    
-/*     if (gen > 3 && (chacha20_random(rng) % 10) < (gen > 10 ? 5 : 2)) {
-        blocks_arm(code, size, rng);
-        drop_mut(&mut_log, 0, size, MUT_REORDER, gen, "arm block reordering");
-        changes++;
-        DBG("[!] ARM block reordering applied\n");
-    } */
-    
-#endif
-
-  
-#if defined(ARCH_X86)
-    int bad_target = 0;
-    for (size_t off = 0; off < size;) {
-    x86_inst_t inst;
-    if (!decode_x86_withme(code + off, size - off, 0, &inst, NULL) || !inst.valid || inst.len == 0) break;
-    if (inst.has_modrm && (inst.opcode[0] >= 0x88 && inst.opcode[0] <= 0x8B)) {
-        uint8_t base = inst.modrm & 0x7;
-        if (base == 0 /* rax */ || base == 1 /* rcx */) {
-                uint8_t orig_modrm = inst.modrm;
-                int substituted = 0;
-  
-                for (uint8_t r = 2; r < 8; ++r) {
-                    if (!liveness.regs[r].iz_live && r != 4 && r != 5) {
-                        uint8_t reg_field = (orig_modrm >> 3) & 0x7;
-                        if (r == reg_field) continue;
-                        uint8_t new_modrm = (orig_modrm & 0xF8) | r;
-                        code[off + inst.opcode_len] = new_modrm;
-                        x86_inst_t test_inst;
-                        if (decode_x86_withme(code + off, size - off, 0, &test_inst, NULL) && test_inst.valid) {
-                            DBG("[ADV] Substituted base reg at 0x%zx: %d -> %d", off, base, r);
-                            substituted = 1;
-                            break;
-                        }
-                    }
-                }
-    off += inst.len;
-                continue;
-        }
-        }
-        if (inst.is_control_flow) {
-            size_t target = 0;
-            if (inst.opcode[0] == 0xE9 || inst.opcode[0] == 0xE8) { // JMP/CALL rel32
-                target = off + inst.len + (int32_t)inst.imm;
-            } else if (inst.opcode[0] >= 0x70 && inst.opcode[0] <= 0x7F) { // Jcc rel8
-                target = off + inst.len + (int8_t)inst.opcode[1];
-            } else if (inst.opcode[0] == 0x0F && inst.opcode[1] >= 0x80 && inst.opcode[1] <= 0x8F) { // Jcc rel32
-                target = off + inst.len + (int32_t)inst.imm;
-            } else {
-                off += inst.len;
-                continue;
-            }
-            int aligned = 0;
-            for (size_t o2 = 0; o2 < size;) {
-                x86_inst_t i2;
-                if (!decode_x86_withme(code + o2, size - o2, 0, &i2, NULL) || !i2.valid || i2.len == 0) break;
-                if (o2 == target) { aligned = 1; break; }
-                o2 += i2.len;
-            }
-            if (!aligned && target < size) {
-                DBG("[!] Jump/call at 0x%zx targets non-aligned offset 0x%zx", off, target);
-                bad_target = 1;
-            }
-            if (inst.opcode[0] == 0x9A || inst.opcode[0] == 0xEA) {
-  
-                DBG("[!] Far call/jmp at 0x%zx, skipping mutation", off);
-                continue; 
-            }
-        }
-        off += inst.len;
-    }
-    if (bad_target) {
-        memcpy(code, original, size);
-        freeme(&mut_log);
-        return;
     }
 #endif
 
     memcpy(code, original, size);
     freeme(&mut_log);
-}
-
-static bool s_syscall(const uint8_t *code, size_t size) {
-    #if defined(ARCH_X86)
-        size_t offset = 0;
-        while (offset < size) {
-            x86_inst_t inst;
-            if (!decode_x86_withme(code + offset, size - offset, 0, &inst, NULL) || !inst.valid || inst.len == 0)
-                break;
-            if (inst.opcode_len == 2 && inst.opcode[0] == 0x0f && inst.opcode[1] == 0x05)
-                return true;
-            offset += inst.len;
-        }
-    #endif
-        return false;
-    }
-
-    static bool has_anom(const uint8_t *code, size_t size) {
-  
-        #if defined(ARCH_X86)
-            size_t offset = 0;
-            while (offset < size) {
-                x86_inst_t inst;
-                if (!decode_x86_withme(code + offset, size - offset, 0, &inst, NULL) || !inst.valid || inst.len == 0)
-                    break;
-                if (inst.opcode[0] == 0x48 && inst.opcode[1] == 0x31 && inst.raw[2] == 0xC0)
-                    return true;
-                if (inst.opcode[0] == 0xCD && inst.opcode[1] == 0x80)
-                    return true;
-                if (inst.opcode[0] == 0xEB)
-                    return true;
-                offset += inst.len;
-            }
-        #endif
-            return false;
-        }
-        
-static bool iz_exec(const uint8_t *code, size_t size) {
-    size_t nonzero = 0;
-    for (size_t i = 0; i < size; ++i)
-        if (code[i] != 0x00 && code[i] != 0x90) 
-            nonzero++;
-    return (double)nonzero / size > 0.8;
-}
-
-bool is_shellcode_mode(const uint8_t *code, size_t size, const flowmap *cfg) {
-    if (size == 0 || size > PAGE_SIZE) return false;
-    if (cfg->num_blocks > 4) return false;
-
-    if (s_syscall(code, size)) return true;
-    if (has_anom(code, size)) return true;
-    if (iz_exec(code, size) && cfg->num_blocks <= 2) return true;
-
-    return false;
+    free(original);
 }
 
 void mutate(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, engine_context_t *ctx) {
+    if (!code || size < 16 || !rng) return;
+
     if (ctx) {
         ctx->debug_code = code;
         ctx->debug_code_size = size;
     }
-    if (size < 16) return;
-
-     if (!rng) {
-        return;
-    }
-
-    flowmap cfg;
-    sketch_flow(code, size, &cfg);
-
-    bool shellcode_mode = is_shellcode_mode(code, size, &cfg);
-
-#if defined(ARCH_X86)
-    muttt_t mut_log;
-    liveness_state_t liveness;
-    init_mut(&mut_log);
-    boot_live(&liveness);
-
-    if (shellcode_mode) {
-        uint8_t *original = malloc(size);
-        if (!original) return;
-        memcpy(original, code, size);
-
-        unsigned mutation_intensity = gen + 1;
-        size_t offset = 0;
-
-        while (offset < size) {
-            x86_inst_t inst;
-            if (!decode_x86_withme(code + offset, size - offset, 0, &inst, NULL) ||
-                !inst.valid || inst.len == 0) break;
-
-            bool skip = false;
-
-            if (inst.is_control_flow || inst.modifies_ip)
-                skip = true;
-
-            if (inst.has_modrm) {
-                uint8_t reg = modrm_reg(inst.modrm);
-                uint8_t rm  = modrm_rm(inst.modrm);
-                if (reg == 4 || reg == 5 || rm == 4 || rm == 5)
-                    skip = true;
-            }
-
-            if ((inst.opcode[0] == 0x50 || inst.opcode[0] == 0x58) ||
-                ((inst.opcode[0] & 0xF0) == 0xE0) ||
-                (inst.opcode[0] == 0xC3 || inst.opcode[0] == 0xCB) ||
-                inst.opcode[0] == 0x9A || inst.opcode[0] == 0xFF)
-                skip = true;
-
-            if ((inst.opcode[0] & 0xF8) == 0xB8)
-                skip = true;
-
-            if (!skip) {
-                if (inst.opcode[0] == 0x90) {
-  
-                } else if ((inst.opcode[0] == 0x89 || inst.opcode[0] == 0x8B) && inst.has_modrm) {
-                    uint8_t reg = modrm_reg(inst.modrm);
-                    uint8_t rm  = modrm_rm(inst.modrm);
-                    if (reg == rm && offset + 1 < size) {
-                        code[offset]     = 0x31;
-                        code[offset + 1] = 0xC0 | (reg << 3) | reg;
-                    }
-                } else if (inst.opcode[0] == 0x31 && inst.has_modrm) {
-                    uint8_t reg = modrm_reg(inst.modrm);
-                    uint8_t rm  = modrm_rm(inst.modrm);
-                    if (reg == rm) {
-                        code[offset]     = 0x89;
-                        code[offset + 1] = 0xC0 | (reg << 3) | reg;
-                    }
-                }
-            }
-
-            offset += inst.len;
-        }
-
-  
-        freeme(&mut_log);
-        free(cfg.blocks);
-        return;
-    }
-#endif
 
     _mut8(code, size, rng, gen);
-
-  
-#if defined(ARCH_X86)
-    freeme(&mut_log);
-#endif
-    free(cfg.blocks);
 }
+
 
 size_t decode_map(const uint8_t *code, size_t size, instr_info_t *out, size_t max) {
     size_t n = 0, off = 0;
@@ -2111,46 +1873,6 @@ static void block_liveness(const uint8_t *code, size_t size, blocknode *block, b
             live_regs[4] = true; // RSP live
         }
     }
-}
-
-void mut_sh3ll(uint8_t *shellcode, size_t shellcode_len, chacha_state_t *rng, unsigned gen, engine_context_t *ctx) {
-    uint8_t *buffer = malloc(shellcode_len);
-    if (!buffer) return;
-    memcpy(buffer, shellcode, shellcode_len);
-
-#if defined(ARCH_X86)
-    size_t offset = 0;
-    while (offset < shellcode_len) {
-        x86_inst_t inst;
-        if (!decode_x86_withme(buffer + offset, shellcode_len - offset, 0, &inst, NULL) || !inst.valid || inst.len == 0) {
-            offset++;
-            continue;
-        }
-  
-        bool is_nop = (inst.opcode[0] == 0x90);
-        bool is_mov_rr = (inst.opcode[0] == 0x48 && inst.opcode[1] == 0x89 && inst.has_modrm && modrm_reg(inst.modrm) == modrm_rm(inst.modrm));
-        bool is_xor_rr = (inst.opcode[0] == 0x48 && inst.opcode[1] == 0x31 && inst.has_modrm && modrm_reg(inst.modrm) == modrm_rm(inst.modrm));
-        if (is_nop || is_mov_rr || is_xor_rr) {
-            uint8_t r = chacha20_random(rng) % 3;
-            if (r == 0 && !is_nop) {
-                buffer[offset] = 0x90;
-                for (size_t i = 1; i < inst.len; ++i) buffer[offset + i] = 0x90;
-            } else if (r == 1 && is_mov_rr) {
-                buffer[offset] = 0x48;
-                buffer[offset + 1] = 0x31;
-                buffer[offset + 2] = inst.modrm;
-            } else if (r == 2 && is_xor_rr) {
-                buffer[offset] = 0x48;
-                buffer[offset + 1] = 0x89;
-                buffer[offset + 2] = inst.modrm;
-            }
-        }
-        offset += inst.len ? inst.len : 1;
-    }
-#endif
-    memcpy(shellcode, buffer, shellcode_len);
-    free(buffer);
-    return;
 }
 
 static bool rec_cfg_add_block(rec_flowmap *cfg, size_t start, size_t end, bool is_exit) {
