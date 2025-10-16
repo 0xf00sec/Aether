@@ -44,19 +44,15 @@
 #include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/aes.h>
+#include <openssl/rsa.h>
+
+#include <curl/curl.h>
+#include <zlib.h>
+
 #include <CommonCrypto/CommonCryptor.h>
 #include <CommonCrypto/CommonDigest.h>
 #include <CoreFoundation/CoreFoundation.h>
 
-#include <curl/curl.h>
-#include <openssl/rsa.h>
-#include <openssl/pem.h>
-#include <openssl/evp.h>
-#include <openssl/rand.h>
-#include <zlib.h>
-#include <ftw.h>
-#include <libgen.h>
-#include <arpa/inet.h>
 
 #include <immintrin.h>
 
