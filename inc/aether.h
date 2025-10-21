@@ -85,13 +85,6 @@
 #define ALIGN_PAGE(x) (((x) + PAGE_SIZE_64 - 1) & ~(PAGE_SIZE_64 - 1))
 #define ALIGN_8(x) (((x) + 7) & ~7)
 
-#ifndef MIN
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#endif
-#ifndef MAX
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#endif 
-
 /* DEBUG=1 (FOO flag) */
 #ifdef FOO
 #define DBG(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
@@ -751,12 +744,6 @@ size_t snap_len(const uint8_t *buf, size_t maxlen);
 // Mach-O 
 uint8_t* wrap_macho(const uint8_t *code, size_t code_size, size_t *out_size);  
 bool V_machO(const uint8_t *data, size_t size);
-
-// Injection
-bool inject_tramps(const char *binary_path,
-                                   context_t *ctx,
-                                   uint8_t *mutated_code,
-                                   size_t mutated_size);
 
 // Reflective loading
 bool exec_mem(uint8_t *data, size_t size);
