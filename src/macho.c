@@ -1,23 +1,8 @@
 #include <aether.h>
 
 /**
- * Mach-O Builder Wraps mutated code into valid Mach-O binary
- * 
+ * Wraps mutated code into valid Mach-O binary
  * Mutated code, making it loadable by our loader.
- * 
- * Structure:
- * - Mach-O Header
- * - Load Commands:
- *   - LC_SEGMENT_64 (__PAGEZERO)
- *   - LC_SEGMENT_64 (__TEXT) - Executable code
- *   - LC_SEGMENT_64 (__DATA) - Data/BSS (if needed)
- *   - LC_SEGMENT_64 (__LINKEDIT) - Symbol/string tables
- *   - LC_SYMTAB - Symbol table info
- *   - LC_DYSYMTAB - Dynamic symbol table info
- *   - LC_MAIN - Entry point
- * - Section data (__TEXT,__text)
- * - Symbol table
- * - String table
  *  https://github.com/aidansteele/osx-abi-macho-file-format-reference
  */
 
@@ -25,13 +10,13 @@ static macho_builder_t* builder_init(size_t code_size) {
     macho_builder_t *builder = calloc(1, sizeof(macho_builder_t));
     if (!builder) return NULL;
     
-    // Calculate total size needed
+    // Calculate
     size_t header_size = sizeof(macho_header_t);
     size_t code_offset = ALIGN_PAGE(header_size);  // This is where code actually starts
     size_t aligned_code_size = ALIGN_PAGE(code_size);
     size_t linkedit_offset = code_offset + aligned_code_size;
-    size_t symtab_size = 1024;  // Space for symbols
-    size_t strtab_size = 1024;  // Space for strings
+    size_t symtab_size = 1024;  // symbols
+    size_t strtab_size = 1024;  // strings
     size_t linkedit_size = symtab_size + strtab_size;
     
     builder->capacity = linkedit_offset + linkedit_size;
@@ -46,9 +31,9 @@ static macho_builder_t* builder_init(size_t code_size) {
     builder->header_size = header_size;
     builder->code_size = code_size;
     
-    DBG("  Header size: %zu bytes\n", header_size);
-    DBG("  Code offset: %zu bytes (page-aligned)\n", code_offset);
-    DBG("  Code size: %zu bytes\n", code_size);
+    printf("  Header size: %zu bytes\n", header_size);
+    printf("  Code offset: %zu bytes (page-aligned)\n", code_offset);
+    printf("  Code size: %zu bytes\n", code_size);
     
     return builder;
 }
@@ -80,7 +65,6 @@ static void build_header(macho_builder_t *builder) {
     hdr->header.ncmds = 6;  // PAGEZERO, TEXT, LINKEDIT, SYMTAB, DYSYMTAB, MAIN
     hdr->header.flags = MH_NOUNDEFS | MH_DYLDLINK | MH_TWOLEVEL | MH_PIE;
     
-    // Calculate size of load commands
     size_t load_cmds_size = 
         sizeof(struct segment_command_64) +  // PAGEZERO
         sizeof(struct segment_command_64) + sizeof(struct section_64) +  // TEXT
@@ -91,7 +75,7 @@ static void build_header(macho_builder_t *builder) {
     
     hdr->header.sizeofcmds = load_cmds_size;
     
-    DBG("Built header (ncmds=%u, sizeofcmds=%u)\n", 
+    printf("cmds=%u, sizeofcmds=%u \n", 
         hdr->header.ncmds, hdr->header.sizeofcmds);
 }
 
@@ -110,22 +94,21 @@ static void build_page0(macho_builder_t *builder) {
     hdr->pagezero_segment.nsects = 0;
     hdr->pagezero_segment.flags = 0;
     
-    DBG("Built __PAGEZERO segment\n");
+    printf("Built __PAGEZERO segment\n");
 }
 
 static void build_text(macho_builder_t *builder) {
     macho_header_t *hdr = (macho_header_t *)builder->buffer;
     
     // Calculate offsets
-    // __TEXT segment starts at file offset 0 and includes the header!
-    size_t text_vmaddr = PAGE_SIZE_64;  // After PAGEZERO
-    size_t text_fileoff = 0;  // Segment includes header from beginning of file
-    size_t code_fileoff = ALIGN_PAGE(builder->header_size);  // Code starts after header
-    size_t text_filesize = code_fileoff + ALIGN_PAGE(builder->code_size);  // Total segment size
+    size_t text_vmaddr = PAGE_SIZE_64; 
+    size_t text_fileoff = 0;  
+    size_t code_fileoff = ALIGN_PAGE(builder->header_size); 
+    size_t text_filesize = code_fileoff + ALIGN_PAGE(builder->code_size);  // segment size
     
     builder->code_offset = code_fileoff;
     
-    // __TEXT segment (includes header + code)
+    // __TEXT segment 
     strncpy(hdr->text_segment.segname, "__TEXT", 16);
     hdr->text_segment.cmd = LC_SEGMENT_64;
     hdr->text_segment.cmdsize = sizeof(struct segment_command_64) + sizeof(struct section_64);
@@ -152,7 +135,7 @@ static void build_text(macho_builder_t *builder) {
     hdr->text_section.reserved2 = 0;
     hdr->text_section.reserved3 = 0;
     
-    DBG("Built __TEXT segment (vmaddr=0x%llx, size=0x%llx)\n",
+    printf("Built __TEXT segment (vmaddr=0x%llx, size=0x%llx)\n",
         hdr->text_segment.vmaddr, hdr->text_segment.vmsize);
 }
 
@@ -163,7 +146,7 @@ static void build_linkedit(macho_builder_t *builder) {
     // __LINKEDIT comes after __TEXT segment
     size_t linkedit_fileoff = hdr->text_segment.fileoff + hdr->text_segment.filesize;
     size_t linkedit_vmaddr = hdr->text_segment.vmaddr + hdr->text_segment.vmsize;
-    size_t linkedit_size = 2048;  // Space for symbol/string tables
+    size_t linkedit_size = 2048;  
     
     builder->symtab_offset = linkedit_fileoff;
     builder->strtab_offset = linkedit_fileoff + 1024;
@@ -181,7 +164,7 @@ static void build_linkedit(macho_builder_t *builder) {
     hdr->linkedit_segment.nsects = 0;
     hdr->linkedit_segment.flags = 0;
     
-    DBG("Built __LINKEDIT segment (fileoff=0x%llx)\n",
+    printf("Built __LINKEDIT segment (fileoff=0x%llx)\n",
         hdr->linkedit_segment.fileoff);
 }
 
@@ -195,7 +178,7 @@ static void build_symtab(macho_builder_t *builder) {
     hdr->symtab_cmd.stroff = builder->strtab_offset;
     hdr->symtab_cmd.strsize = builder->strtab_size;
     
-    DBG("Built LC_SYMTAB command\n");
+    printf("Built LC_SYMTAB command\n");
 }
 
 static void build_dysymtab(macho_builder_t *builder) {
@@ -204,7 +187,7 @@ static void build_dysymtab(macho_builder_t *builder) {
     hdr->dysymtab_cmd.cmd = LC_DYSYMTAB;
     hdr->dysymtab_cmd.cmdsize = sizeof(struct dysymtab_command);
     
-    // All zeros for minimal binary
+    // All zeros for minimal pieace
     hdr->dysymtab_cmd.ilocalsym = 0;
     hdr->dysymtab_cmd.nlocalsym = 0;
     hdr->dysymtab_cmd.iextdefsym = 0;
@@ -224,7 +207,7 @@ static void build_dysymtab(macho_builder_t *builder) {
     hdr->dysymtab_cmd.locreloff = 0;
     hdr->dysymtab_cmd.nlocrel = 0;
     
-    DBG("Built LC_DYSYMTAB command\n");
+    printf("Built LC_DYSYMTAB command\n");
 }
 
 static void build_entry(macho_builder_t *builder) {
@@ -235,7 +218,7 @@ static void build_entry(macho_builder_t *builder) {
     hdr->entry_cmd.entryoff = builder->code_offset;  // Entry at start of code
     hdr->entry_cmd.stacksize = 0;  // Use default stack size
     
-    DBG("Built LC_MAIN command (entryoff=0x%llx)\n",
+    printf("Built LC_MAIN command (entryoff=0x%llx)\n",
         hdr->entry_cmd.entryoff);
 }
 
@@ -244,34 +227,34 @@ static void build_entry(macho_builder_t *builder) {
  */
 static void write_code(macho_builder_t *builder, const uint8_t *code, size_t code_size) {
     if (code_size != builder->code_size) {
-        DBG("WARNING - code size mismatch (%zu vs %zu)\n",
+        printf("WARNING - code size mismatch (%zu vs %zu)\n",
             code_size, builder->code_size);
     }
     
-    // Calculate aligned size
+    // Calculate 
     size_t aligned_size = ALIGN_PAGE(code_size);
     
     // Never hurt 
     if (builder->code_offset + aligned_size > builder->capacity) {
-        DBG("  Code offset: 0x%zx\n", builder->code_offset);
-        DBG("  Aligned size: 0x%zx\n", aligned_size);
-        DBG("  Required: 0x%zx\n", builder->code_offset + aligned_size);
-        DBG("  Capacity: 0x%zx\n", builder->capacity);
+        printf("  Code offset: 0x%zx\n", builder->code_offset);
+        printf("  Aligned size: 0x%zx\n", aligned_size);
+        printf("  Required: 0x%zx\n", builder->code_offset + aligned_size);
+        printf("  Capacity: 0x%zx\n", builder->capacity);
         return;
     }
     
-    // Copy code to the designated offset
+    // Copy 
     memcpy(builder->buffer + builder->code_offset, code, code_size);
     
-    // Zero-fill remaining space in page
+    // Zero-fill
     if (aligned_size > code_size) {
         memset(builder->buffer + builder->code_offset + code_size, 0, 
                aligned_size - code_size);
     }
     
-    DBG("Wrote %zu bytes of code at offset 0x%zx\n",
+    printf("Wrote %zu bytes of code at offset 0x%zx\n",
         code_size, builder->code_offset);
-    DBG("  Aligned to %zu bytes\n", aligned_size);
+    printf("  Aligned to %zu bytes\n", aligned_size);
 }
 
 /**
@@ -301,116 +284,113 @@ static bool macho_stuff(macho_builder_t *builder) {
     macho_header_t *hdr = (macho_header_t *)builder->buffer;
 
     if (hdr->header.magic != MH_MAGIC_64) {
-        DBG("[!] Invalid magic number (0x%x)\n", hdr->header.magic);
+        printf("[!] Invalid magic number (0x%x)\n", hdr->header.magic);
         return false;
     }
     
 #if defined(__x86_64__)
     if (hdr->header.cputype != CPU_TYPE_X86_64) {
-        DBG("[!] We expected x86_64\n");
+        printf("[!] We expected x86_64\n");
         return false;
     }
 #elif defined(__aarch64__)
     if (hdr->header.cputype != CPU_TYPE_ARM64) {
-        DBG("[!] We expected ARM64\n");
+        printf("[!] We expected ARM64\n");
         return false;
     }
 #endif
-    DBG(" [+] CPU is Aight\n");
     
     if (hdr->header.filetype != MH_EXECUTE) {
-        DBG("[!] Invalid file type (%u)\n", hdr->header.filetype);
+        printf("[!] Invalid file type (%u)\n", hdr->header.filetype);
         return false;
     }
     
     if (hdr->header.ncmds == 0 || hdr->header.ncmds > 100) {
-        DBG("[!] Invalid number of load commands (%u)\n", hdr->header.ncmds);
+        printf("[!] Invalid number of load commands (%u)\n", hdr->header.ncmds);
         return false;
     }
     
-    // if load commands don't overlap with code
     size_t load_cmds_end = sizeof(struct mach_header_64) + hdr->header.sizeofcmds;
     if (load_cmds_end > builder->code_offset) {
-        DBG("[!] Load commands overlap with code\n");
-        DBG("                  Load cmds end: 0x%zx, Code offset: 0x%zx\n",
+        printf("[!] Load commands overlap with code\n");
+        printf("                  Load cmds end: 0x%zx, Code offset: 0x%zx\n",
             load_cmds_end, builder->code_offset);
         return false;
     }
     
-    // Properly aligned
     if (hdr->text_segment.fileoff % PAGE_SIZE_64 != 0) {
-        DBG("[!] __TEXT segment not page-aligned (0x%llx)\n",
+        printf("[!] __TEXT segment not page-aligned (0x%llx)\n",
             hdr->text_segment.fileoff);
         return false;
     }
     
     if (hdr->linkedit_segment.fileoff % PAGE_SIZE_64 != 0) {
-        DBG("[!] __LINKEDIT segment not page-aligned (0x%llx)\n",
+        printf("[!] __LINKEDIT segment not page-aligned (0x%llx)\n",
             hdr->linkedit_segment.fileoff);
         return false;
     }
     
     if (hdr->text_segment.vmaddr < hdr->pagezero_segment.vmaddr + hdr->pagezero_segment.vmsize) {
-        DBG("[!] __TEXT vmaddr overlaps with __PAGEZERO\n");
-        DBG("                  PAGEZERO: 0x%llx-0x%llx\n",
+        printf("[!] __TEXT vmaddr overlaps with __PAGEZERO\n");
+        printf("                  PAGEZERO: 0x%llx-0x%llx\n",
             hdr->pagezero_segment.vmaddr,
             hdr->pagezero_segment.vmaddr + hdr->pagezero_segment.vmsize);
-        DBG("                  TEXT: 0x%llx\n", hdr->text_segment.vmaddr);
+        printf("                  TEXT: 0x%llx\n", hdr->text_segment.vmaddr);
         return false;
     }
     
     if (!(hdr->text_segment.initprot & VM_PROT_EXECUTE)) {
-        DBG("[!] __TEXT segment not executable\n");
+        printf("[!] __TEXT segment not executable\n");
         return false;
     }
     
     if (hdr->text_segment.fileoff != 0) {
-        DBG("[!] __TEXT segment doesn't start at file offset 0\n");
+        printf("[!] __TEXT segment doesn't start at file offset 0\n");
         return false;
     }
     
     if (hdr->text_section.offset < hdr->text_segment.fileoff ||
         hdr->text_section.offset + hdr->text_section.size > 
         hdr->text_segment.fileoff + hdr->text_segment.filesize) {
-        DBG("[!] __text section outside __TEXT segment\n");
+        printf("[!] __text section outside __TEXT segment\n");
         return false;
     }
     
     if (hdr->entry_cmd.entryoff < hdr->text_segment.fileoff ||
         hdr->entry_cmd.entryoff >= hdr->text_segment.fileoff + hdr->text_segment.filesize) {
-        DBG("[!] Entry point outside __TEXT segment\n");
+        printf("[!] Entry point outside __TEXT segment\n");
         return false;
     }
-    DBG(" [+] Entry point within __TEXT segment\n");
+    printf(" [+] Entry point within __TEXT segment\n");
     
     if (builder->code_size == 0 || builder->code_size > 100 * 1024 * 1024) {
-        DBG("[!] Code size unreasonable (%zu bytes)\n", builder->code_size);
+        printf("[!] Code size unreasonable (%zu bytes)\n", builder->code_size);
         return false;
     }
-    DBG(" [+] Code size reasonable (%zu bytes)\n", builder->code_size);
+    printf(" [+] Code size reasonable (%zu bytes)\n", builder->code_size);
     
-    DBG("[+] All Passed\n");
+    printf("[+] All Passed\n");
     return true;
 }
 
 /**
  * Wrap code in Mach-O 
  */
-uint8_t* wrap__macho(const uint8_t *code, size_t code_size, size_t *out_size) {
+uint8_t* wrap_macho(const uint8_t *code, size_t code_size, size_t *out_size) {
     if (!code || code_size == 0 || !out_size) {
-        DBG("Invalid parameters\n");
+        printf("Invalid parameters\n");
         return NULL;
     }
     
     if (code_size > 100 * 1024 * 1024) {  // 100MB limit
-        DBG("Code size too large (%zu bytes)\n", code_size);
+        printf("Code size too large (%zu bytes)\n", code_size);
         return NULL;
     }
     
     // Initialize builder
     macho_builder_t *builder = builder_init(code_size);
     if (!builder) {
-        DBG("Failed to initialize builder\n");
+        printf("Failed to initialize builder\n");
         return NULL;
     }
     
@@ -428,12 +408,11 @@ uint8_t* wrap__macho(const uint8_t *code, size_t code_size, size_t *out_size) {
     init_symbol(builder);
     
     if (!macho_stuff(builder)) {
-        DBG("Validation failed\n");
+        printf("Validation failed\n");
         builder_free(builder);
         return NULL;
     }
     
-    // Calculate final size
     size_t final_size = calculate_fsz(builder);
     *out_size = final_size;
     
@@ -442,7 +421,7 @@ uint8_t* wrap__macho(const uint8_t *code, size_t code_size, size_t *out_size) {
     
     builder_free(builder);
     
-    DBG("Mach-O binary (%zu bytes)\n", final_size);
+    printf("Mach-O binary (%zu bytes)\n", final_size);
     
     return result;
 }
