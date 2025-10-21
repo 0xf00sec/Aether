@@ -566,14 +566,46 @@ static bool jnk_fill(context_t *ctx, unsigned intensity) {
         if (chk_prot(offset, ctx->ranges, ctx->numcheck) || inst.is_control_flow) {
             offset += inst.len;continue;}
 
-        // Mutation proba
-        if ((chacha20_random(&ctx->rng) % 30) >= (intensity * 5)) {
+        // Increased mutation probability
+        if ((chacha20_random(&ctx->rng) % 100) >= (intensity * 10)) {  // Changed from % 30 and * 5
             offset += inst.len; continue;}
 
         uint8_t backup[16];
         memcpy(backup, ctx->working_code + offset, inst.len);
 
         bool mutated = false;
+
+        if (inst.len == 2 && inst.raw[0] == 0x89) {
+            // MOV reg, reg 
+            uint8_t r1 = chacha20_random(&ctx->rng) % 8;
+            uint8_t r2 = chacha20_random(&ctx->rng) % 8;
+            if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5) {
+                ctx->working_code[offset]     = 0x89;
+                ctx->working_code[offset + 1] = 0xC0 | (r1 << 3) | r2;
+                mutated = true;
+            }
+        } else if (inst.len == 3 && inst.raw[0] == 0x48 && inst.raw[1] == 0x89) {
+            // REX.W MOV reg, reg
+            uint8_t r1 = chacha20_random(&ctx->rng) % 8;
+            uint8_t r2 = chacha20_random(&ctx->rng) % 8;
+            if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5) {
+                ctx->working_code[offset]     = 0x48;
+                ctx->working_code[offset + 1] = 0x89;
+                ctx->working_code[offset + 2] = 0xC0 | (r1 << 3) | r2;
+                mutated = true;
+            }
+        } else if (inst.len == 3 && inst.raw[0] == 0x48 && inst.raw[1] == 0x31) {
+            // REX.W XOR reg, reg 
+            uint8_t r1 = chacha20_random(&ctx->rng) % 8;
+            uint8_t r2 = chacha20_random(&ctx->rng) % 8;
+            if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5) {
+                ctx->working_code[offset]     = 0x48;
+                ctx->working_code[offset + 1] = 0x31;
+                ctx->working_code[offset + 2] = 0xC0 | (r1 << 3) | r2;
+                mutated = true;
+            }
+        }
+
         if (mutated) {
             x86_inst_t test_inst;
             if (!(decode_x86_withme(ctx->working_code + offset, ctx->codesz - offset, 0, &test_inst, NULL) && test_inst.valid)) {
@@ -587,7 +619,6 @@ static bool jnk_fill(context_t *ctx, unsigned intensity) {
 
     return changes > 0;
 }
-
 
 /** 
  * Runs expansion > mutations > register swaps > junk injection.
