@@ -20,9 +20,9 @@ static void reg_loaded(image_t *image) {
     
     if (num_loaded_images < LOADED_IMAGES) {
         loaded_images[num_loaded_images++] = image;
-        printf("Registered image %zu at %p\n", num_loaded_images, image->base);
+        DBG("Registered image %zu at %p\n", num_loaded_images, image->base);
     } else {
-        printf("Maximum loaded images reached\n");
+        DBG("Maximum loaded images reached\n");
     }
     
     pthread_mutex_unlock(&images_mutex);
@@ -37,7 +37,7 @@ static void cleanup_loaded(void) {
     
     for (size_t i = 0; i < num_loaded_images; i++) {
         if (loaded_images[i]) {
-            printf("Cleaning up image at %p\n", loaded_images[i]->base);
+            DBG("Cleaning up image at %p\n", loaded_images[i]->base);
             unload_image(loaded_images[i]);
             loaded_images[i] = NULL;
         }
@@ -52,14 +52,14 @@ static void cleanup_loaded(void) {
  */
 static bool validate_macho(uint8_t *data, size_t size) {
     if (!data || size < sizeof(struct mach_header_64)) {
-        printf("Size too small\n"); // Ohh 
+        DBG("Size too small\n"); // Ohh 
         return false;
     }
     
     struct mach_header_64 *mh = (struct mach_header_64 *)data;
     
     if (mh->magic != MH_MAGIC_64) {
-        printf("Magic (0x%x), expected 0x%x\n", 
+        DBG("Magic (0x%x), expected 0x%x\n", 
             mh->magic, MH_MAGIC_64);
         return false;
     }
@@ -74,10 +74,10 @@ static bool validate_macho(uint8_t *data, size_t size) {
         return false;
     }
     
-    printf("Mach-O 64-bit binary\n");
-    printf("  CPU: %s\n", mh->cputype == CPU_TYPE_X86_64 ? "x86_64" : "ARM64");
-    printf("  Type: %d\n", mh->filetype);
-    printf("  Load commands: %u\n", mh->ncmds);
+    DBG("Mach-O 64-bit binary\n");
+    DBG("  CPU: %s\n", mh->cputype == CPU_TYPE_X86_64 ? "x86_64" : "ARM64");
+    DBG("  Type: %d\n", mh->filetype);
+    DBG("  Load commands: %u\n", mh->ncmds);
     
     return true;
 }
@@ -115,7 +115,7 @@ static void* find_entry(struct mach_header_64 *mh, void *base) {
         if (lc->cmd == LC_MAIN) {
             struct entry_point_command *ep = (struct entry_point_command *)lc;
             void *entry = (uint8_t *)base + ep->entryoff;
-            printf("Found LC_MAIN entry point at file offset 0x%llx -> %p\n", 
+            DBG("Found LC_MAIN entry point at file offset 0x%llx -> %p\n", 
                    ep->entryoff, entry);
             return entry;
         }
@@ -127,7 +127,7 @@ static void* find_entry(struct mach_header_64 *mh, void *base) {
                 (x86_thread_state64_t *)((uint8_t *)lc + sizeof(struct thread_command));
             uint64_t entry_vmaddr = state->__rip;
             void *entry = (uint8_t *)base + (entry_vmaddr - min_vmaddr);
-            printf("Found LC_UNIXTHREAD entry point at vmaddr 0x%llx -> %p\n", 
+            DBG("Found LC_UNIXTHREAD entry point at vmaddr 0x%llx -> %p\n", 
                    entry_vmaddr, entry);
             return entry;
             #elif defined(__aarch64__)
@@ -135,7 +135,7 @@ static void* find_entry(struct mach_header_64 *mh, void *base) {
                 (arm_thread_state64_t *)((uint8_t *)lc + sizeof(struct thread_command));
             uint64_t entry_vmaddr = state->__pc;
             void *entry = (uint8_t *)base + (entry_vmaddr - min_vmaddr);
-            printf("Found LC_UNIXTHREAD entry point at vmaddr 0x%llx -> %p\n", 
+            DBG("Found LC_UNIXTHREAD entry point at vmaddr 0x%llx -> %p\n", 
                    entry_vmaddr, entry);
             return entry;
             #endif
@@ -144,7 +144,7 @@ static void* find_entry(struct mach_header_64 *mh, void *base) {
         ptr += lc->cmdsize;
     }
     
-    printf("No entry point found\n");
+    DBG("No entry point found\n");
     return NULL;
 }
 
@@ -162,7 +162,7 @@ static void run_constructors(uint8_t *original_data, size_t size, void *base) {
     
     // For our use case (wrapping mutated code), there are no constructors
     // The code itself executes directly
-    printf("No constructors to run (code executes directly)\n");
+    DBG("No constructors to run (code executes directly)\n");
 }
 
 /**
@@ -181,7 +181,7 @@ static void* map_executable(uint8_t *data, size_t size) {
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         // Bounds check
         if (ptr + sizeof(struct load_command) > end) {
-            printf("Load command %u extends beyond file\n", i);
+            DBG("Load command %u extends beyond file\n", i);
             return NULL;
         }
         
@@ -190,13 +190,13 @@ static void* map_executable(uint8_t *data, size_t size) {
         // Validate cmdsize
         if (lc->cmdsize < sizeof(struct load_command) || 
             ptr + lc->cmdsize > end) {
-            printf("Load command %u has invalid size\n", i);
+            DBG("Load command %u has invalid size\n", i);
             return NULL;
         }
         
         if (lc->cmd == LC_SEGMENT_64) {
             if (lc->cmdsize < sizeof(struct segment_command_64)) {
-                printf("LC_SEGMENT_64 command too small\n");
+                DBG("LC_SEGMENT_64 command too small\n");
                 return NULL;
             }
             
@@ -219,7 +219,7 @@ static void* map_executable(uint8_t *data, size_t size) {
     }
     
     if (min_vmaddr == UINT64_MAX || max_vmaddr == 0) {
-        printf("No valid segments found\n");
+        DBG("No valid segments found\n");
         return NULL;
     }
     
@@ -231,17 +231,17 @@ static void* map_executable(uint8_t *data, size_t size) {
                       MAP_PRIVATE | MAP_ANON, -1, 0);
     
     if (base == MAP_FAILED) {
-        printf("mmap failed: %s\n", strerror(errno));
+        DBG("mmap failed: %s\n", strerror(errno));
         return NULL;
     }
     
-    printf("Allocated %zu bytes at %p (RWX)\n", total_size, base);
+    DBG("Allocated %zu bytes at %p (RWX)\n", total_size, base);
     
     // Map each segment
     ptr = (uint8_t *)mh + sizeof(struct mach_header_64);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         if (ptr + sizeof(struct load_command) > end) {
-            printf("Load command %u extends beyond file\n", i);
+            DBG("Load command %u extends beyond file\n", i);
             munmap(base, total_size);
             return NULL;
         }
@@ -251,7 +251,7 @@ static void* map_executable(uint8_t *data, size_t size) {
         // Validate cmdsize
         if (lc->cmdsize < sizeof(struct load_command) || 
             ptr + lc->cmdsize > end) {
-            printf("Load command %u has invalid size\n", i);
+            DBG("Load command %u has invalid size\n", i);
             munmap(base, total_size);
             return NULL;
         }
@@ -259,7 +259,7 @@ static void* map_executable(uint8_t *data, size_t size) {
         if (lc->cmd == LC_SEGMENT_64) {
             // second pass 
             if (lc->cmdsize < sizeof(struct segment_command_64)) {
-                printf("LC_SEGMENT_64 command too small\n");
+                DBG("LC_SEGMENT_64 command too small\n");
                 munmap(base, total_size);
                 return NULL;
             }
@@ -276,13 +276,13 @@ static void* map_executable(uint8_t *data, size_t size) {
             void *src = data + seg->fileoff;
             
             if (seg->fileoff + seg->filesize > size) {
-                printf("Segment %s extends beyond file\n", seg->segname);
+                DBG("Segment %s extends beyond file\n", seg->segname);
                 munmap(base, total_size);
                 return NULL;
             }
             
             if ((seg->vmaddr - min_vmaddr) + seg->vmsize > total_size) {
-                printf("Segment %s extends beyond allocated memory\n", seg->segname);
+                DBG("Segment %s extends beyond allocated memory\n", seg->segname);
                 munmap(base, total_size);
                 return NULL;
             }
@@ -295,14 +295,14 @@ static void* map_executable(uint8_t *data, size_t size) {
                        seg->vmsize - seg->filesize);
             }
             
-            printf("Mapped segment %s: vmaddr=0x%llx, size=0x%llx\n",
+            DBG("Mapped segment %s: vmaddr=0x%llx, size=0x%llx\n",
                 seg->segname, seg->vmaddr, seg->vmsize);
         }
         
         ptr += lc->cmdsize;
     }
     
-    printf("We mapped all segments\n");
+    DBG("We mapped all segments\n");
     
     return base;
 }
@@ -316,43 +316,43 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
         return NULL;
     }
     
-    printf("Ok\n");
+    DBG("Ok\n");
     
     image_t *image = calloc(1, sizeof(image_t));
     if (!image) {
-        printf("Failed to allocate image structure\n");
+        DBG("Failed to allocate image structure\n");
         return NULL;
     }
     
-    printf("Calling map_executable\n");
+    DBG("Calling map_executable\n");
     
     // Map into executable memory
     image->base = map_executable(data, size);
     if (!image->base) {
-        printf("map_executable failed\n");
+        DBG("map_executable failed\n");
         free(image);
         return NULL;
     }
     
-    printf("map_executable succeeded, base=%p\n", image->base);
+    DBG("map_executable succeeded, base=%p\n", image->base);
     
     image->size = size;
     image->original_data = data;  // Keep reference to original data
     image->header = (struct mach_header_64 *)image->base;  // Header is NOW in mapped memory
     image->loaded = true;
     
-    printf("Verifying mapped header\n");
+    DBG("Verifying mapped header\n");
     
     // Verify
     if (image->header->magic != MH_MAGIC_64) {
-        printf("Mapped header has invalid magic: 0x%x\n", 
+        DBG("Mapped header has invalid magic: 0x%x\n", 
                image->header->magic);
         munmap(image->base, image->size);
         free(image);
         return NULL;
     }
     
-    printf("Mapped header valid (magic=0x%x, ncmds=%u)\n",
+    DBG("Mapped header valid (magic=0x%x, ncmds=%u)\n",
            image->header->magic, image->header->ncmds);
     
     // We need the ORIGINAL data for reading load commands
@@ -360,20 +360,20 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
     image->entry_point = find_entry(original_header, image->base);
     
     if (!image->entry_point) {
-        printf("Failed to find entry point\n");
+        DBG("Failed to find entry point\n");
         munmap(image->base, image->size);
         free(image);
         return NULL;
     }
     
-    printf("Parse is Aight\n");
+    DBG("Parse is Aight\n");
     
     return image;
 }
 
 static bool execute_image(image_t *image) {
     if (!image || !image->loaded) {
-        printf("Invalid or unloaded image\n");
+        DBG("Invalid or unloaded image\n");
         return false;
     }
     
@@ -384,7 +384,7 @@ static bool execute_image(image_t *image) {
     // We don't actually need to call it just having it loaded in RWX memory
     // is enough. The mutations have been applied and the code is ready.
     if (image->entry_point) {
-        printf("Entry point at %p \n", image->entry_point);
+        DBG("Entry point at %p \n", image->entry_point);
     }
     
     // The mutated code is now in RWX memory and can execute
@@ -396,7 +396,7 @@ static void unload_image(image_t *image) {
     
     if (image->base) {
         munmap(image->base, image->size);
-        printf("Unmapped image at %p\n", image->base);
+        DBG("Unmapped image at %p\n", image->base);
     }
     
     free(image);
@@ -409,7 +409,7 @@ static bool code_integrity(image_t *image) {
     
     // is still valid in mapped memory
     if (image->header->magic != MH_MAGIC_64) {
-        printf("Header corrupted during mapping\n");
+        DBG("Header corrupted during mapping\n");
         return false;
     }
     
@@ -422,20 +422,20 @@ static bool code_integrity(image_t *image) {
     
     for (uint32_t i = 0; i < original_header->ncmds; i++) {
         if (ptr + sizeof(struct load_command) > end) {
-            printf("Load command extends beyond data\n");
+            DBG("Load command extends beyond data\n");
             return false;
         }
         
         struct load_command *lc = (struct load_command *)ptr;
         
         if (lc->cmdsize < sizeof(struct load_command) || ptr + lc->cmdsize > end) {
-            printf("Invalid load command size\n");
+            DBG("Invalid load command size\n");
             return false;
         }
         
         if (lc->cmd == LC_SEGMENT_64) {
             if (lc->cmdsize < sizeof(struct segment_command_64)) {
-                printf("LC_SEGMENT_64 too small\n");
+                DBG("LC_SEGMENT_64 too small\n");
                 return false;
             }
             
@@ -450,11 +450,11 @@ static bool code_integrity(image_t *image) {
     }
     
     if (!has_executable) {
-        printf("No executable segments found\n");
+        DBG("No executable segments found\n");
         return false;
     }
     
-    printf("Code integrity verification passed\n");
+    DBG("Code integrity verification passed\n");
     return true;
 }
 
@@ -470,12 +470,12 @@ static bool code_integrity(image_t *image) {
  */
 bool exec_mem(uint8_t *data, size_t size) { 
     if (!data || size == 0) {
-        printf("Invalid (data=%p, size=%zu)\n", data, size);
+        DBG("Invalid (data=%p, size=%zu)\n", data, size);
         return false;
     }
 
     if (size < sizeof(struct mach_header_64) + sizeof(struct load_command)) {
-        printf("Binary too small (%zu bytes)\n", size);
+        DBG("Binary too small (%zu bytes)\n", size);
         return false;
     }
     
@@ -485,12 +485,12 @@ bool exec_mem(uint8_t *data, size_t size) {
         return false;
     }
     
-    printf("[+] Mach-O parsed successfully\n");
-    printf("  Base address: %p\n", image->base);
-    printf("  Size: %zu bytes\n", image->size);
+    DBG("[+] Mach-O parsed successfully\n");
+    DBG("  Base address: %p\n", image->base);
+    DBG("  Size: %zu bytes\n", image->size);
     
     if (!code_integrity(image)) {
-        printf("[!] Code integrity failed\n");
+        DBG("[!] Code integrity failed\n");
         unload_image(image);
         return false;
     }
@@ -499,9 +499,9 @@ bool exec_mem(uint8_t *data, size_t size) {
     bool success = execute_image(image);
     
     if (success) {
-        printf("  Code loaded at: %p\n", image->base);
+        DBG("  Code loaded at: %p\n", image->base);
     } else {
-        printf("[!] Execution failed\n");
+        DBG("[!] Execution failed\n");
         unload_image(image);
         return false;
     }
