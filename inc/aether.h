@@ -39,7 +39,6 @@
 #include <mach/mach_time.h>
 #include <mach/vm_region.h>
 #include <mach/vm_map.h>
-#include <Security/SecRandom.h>
 #include <pthread.h>
 
 #include <openssl/rsa.h>
@@ -52,6 +51,7 @@
 #include <curl/curl.h>
 #include <zlib.h>
 
+#include <Security/SecRandom.h>
 #include <CommonCrypto/CommonCryptor.h>
 #include <CommonCrypto/CommonDigest.h>
 #include <CoreFoundation/CoreFoundation.h>
