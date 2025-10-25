@@ -1,24 +1,16 @@
 #include <aether.h>
 
-// http://ref.x86asm.net/coder64.html
+/* http://ref.x86asm.net/coder64.html */
 
-/* #if defined(ARCH_X86) */
+#if defined(ARCH_X86)
  
- /**
- * modrm_reg - Extracts the reg field from a ModR/M byte.
- * @param m ModR/M byte.
- * @return The reg field (bits 5-3).
- */
+ /* modrm_reg - Extracts the reg field from a ModR/M byte. */
 uint8_t modrm_reg(uint8_t m);
 
-/**
- * modrm_rm - Extracts the r/m field from a ModR/M byte.
- * @param m ModR/M byte.
- * @return The r/m field (bits 2-0).
- */
+/* modrm_rm - Extracts the r/m field from a ModR/M byte. */
 uint8_t modrm_rm(uint8_t m);
 
-// Legacy prefix? (lock, rep, segment, size)
+/* Legacy prefix? (lock, rep, segment, size) */
 static inline bool is_legacy_prefix(uint8_t b) {
     return b == 0xF0 || b == 0xF2 || b == 0xF3 ||
            b == 0x2E || b == 0x36 || b == 0x3E ||
@@ -26,10 +18,10 @@ static inline bool is_legacy_prefix(uint8_t b) {
            b == 0x66 || b == 0x67;
 }
 
-// REX prefix? (0x40-0x4F)
+/* REX prefix? (0x40-0x4F) */
 static inline bool is_rex(uint8_t b) { return (b & 0xF0) == 0x40; }
 
-// Extract REX.W/R/X/B fields
+/* Extract REX.W/R/X/B fields */
 static void parse_rex(x86_inst_t *inst, uint8_t rex) {
     inst->rex = rex;
     inst->rex_w = (rex >> 3) & 1;
@@ -60,12 +52,12 @@ static int64_t read_disp_se(const uint8_t *p, uint8_t size) {
     return (int32_t)u;  
 }
 
-// Parse VEX (2/3-byte) or EVEX prefix for AVX instructions
+/* Parse VEX (2/3-byte) or EVEX prefix for AVX instructions */
 static bool parse_vex_evex(x86_inst_t *inst, const uint8_t **p, const uint8_t *end) {
     if (!have(*p, end, 1)) return false;
     uint8_t first = **p;
 
-    if (first == 0x62) {  // EVEX
+    if (first == 0x62) {  /* EVEX */
         if (!have(*p, end, 4)) return false;
         inst->evex = true;
         inst->evex_mmmm = (*p)[1] >> 3;
@@ -74,7 +66,7 @@ static bool parse_vex_evex(x86_inst_t *inst, const uint8_t **p, const uint8_t *e
         inst->evex_vvvv = (~(*p)[2] >> 3) & 0xF;
         *p += 4;
         return true;
-    } else if (first == 0xC4) {  // VEX 3-byte
+    } else if (first == 0xC4) {  /* VEX 3-byte */
         if (!have(*p, end, 3)) return false;
         inst->vex = true;
         inst->vex_mmmm = (*p)[1] & 0x1F;
@@ -83,7 +75,7 @@ static bool parse_vex_evex(x86_inst_t *inst, const uint8_t **p, const uint8_t *e
         inst->vex_vvvv = (~(*p)[2] >> 3) & 0xF;
         *p += 3;
         return true;
-    } else if (first == 0xC5) {  // VEX 2-byte
+    } else if (first == 0xC5) {  /* VEX 2-byte */
         if (!have(*p, end, 2)) return false;
         inst->vex = true;
         inst->vex_L    = ((*p)[1] >> 2) & 1;
@@ -95,7 +87,7 @@ static bool parse_vex_evex(x86_inst_t *inst, const uint8_t **p, const uint8_t *e
     return false;
 }
 
-// Does this instruction modify RIP?
+/* Does this instruction modify RIP? */
 static bool is_cflow(uint8_t op0, uint8_t op1, bool has_modrm, uint8_t modrm) {
     if (op0 == 0xC3 || op0 == 0xCB || op0 == 0xC2 || op0 == 0xCA) return true;
     if (op0 == 0xE8 || op0 == 0xE9 || op0 == 0xEB || op0 == 0xEA || op0 == 0x9A) return true;
@@ -183,7 +175,7 @@ static uint8_t imm_size_for(uint8_t op0, uint8_t op1, bool rex_w, bool opsz16) {
     return 0;
 }
 
-// Calculate absolute target for branches/calls
+/* Calculate absolute target for branches/calls */
 static void resolve_target(x86_inst_t *inst, uintptr_t ip) {
     if (!inst->valid) return;
     uint8_t o0 = inst->opcode[0], o1 = inst->opcode[1];
@@ -291,9 +283,9 @@ bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_
     bool opsz16 = false, addrsz32 = false;
     uint8_t seg_override = 0;
     uint8_t prefix_count = 0;
-    const uint8_t MAX_PREFIXES = 4; // Intel spec: max 4 legacy prefixes
+    const uint8_t MAX_PREFIXES = 4; /* Intel spec: max 4 legacy prefixes */
 
-    // Parse prefixes (legacy + REX)
+    /* Parse prefixes (legacy + REX) */
     while (p < end && prefix_count < MAX_PREFIXES) {
         if (!have(p, end, 1)) break;
         uint8_t b = *p;
@@ -322,7 +314,7 @@ bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_
         p++;
         prefix_count++;
         
-        // don't exceed max instruction length
+        /* don't exceed max instruction length */
         if ((size_t)(p - code) >= 15) {
             inst->valid = false;
             return false;
@@ -374,14 +366,14 @@ bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_
         }
     }
 
-    // Calculate instruction length
+    /* Calculate instruction length */
     inst->len = (uint8_t)(p - code);
     if (inst->len > 15) {
         inst->valid = false;
         return false;
     }
     
-    // Copy raw bytes
+    /* Copy raw bytes */
     memcpy(inst->raw, code, inst->len);
 
      
@@ -399,9 +391,9 @@ bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_
     return inst->valid;
 }
 
-// Decode x86-64 instruction 
+/* Decode x86-64 instruction  */
 bool decode_x86(const uint8_t *code, uintptr_t ip, x86_inst_t *inst, memread_fn mem_read) {
     return decode_x86_withme(code, 15, ip, inst, mem_read);
 }
 
-/* #endif   */
+#endif  
