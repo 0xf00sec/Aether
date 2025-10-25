@@ -1,22 +1,20 @@
 #include <aether.h>
 
-/**
- * Wraps mutated code into valid Mach-O binary
- * Mutated code, making it loadable by our loader.
- *  https://github.com/aidansteele/osx-abi-macho-file-format-reference
- */
+/* 
+* Wrap mutated code into valid Mach-O 
+* https://github.com/aidansteele/osx-abi-macho-file-format-reference 
+*/
 
 static macho_builder_t* builder_init(size_t code_size) {
     macho_builder_t *builder = calloc(1, sizeof(macho_builder_t));
     if (!builder) return NULL;
     
-    // Calculate
     size_t header_size = sizeof(macho_header_t);
-    size_t code_offset = ALIGN_PAGE(header_size);  // This is where code actually starts
+    size_t code_offset = ALIGN_PAGE(header_size);
     size_t aligned_code_size = ALIGN_PAGE(code_size);
     size_t linkedit_offset = code_offset + aligned_code_size;
-    size_t symtab_size = 1024;  // symbols
-    size_t strtab_size = 1024;  // strings
+    size_t symtab_size = 1024;
+    size_t strtab_size = 1024;
     size_t linkedit_size = symtab_size + strtab_size;
     
     builder->capacity = linkedit_offset + linkedit_size;
@@ -47,7 +45,6 @@ static void builder_free(macho_builder_t *builder) {
 static void build_header(macho_builder_t *builder) {
     macho_header_t *hdr = (macho_header_t *)builder->buffer;
     
-    // Mach-O header
     hdr->header.magic = MH_MAGIC_64;
     
 #if defined(__x86_64__)
@@ -62,13 +59,13 @@ static void build_header(macho_builder_t *builder) {
 #endif
     
     hdr->header.filetype = MH_EXECUTE;
-    hdr->header.ncmds = 6;  // PAGEZERO, TEXT, LINKEDIT, SYMTAB, DYSYMTAB, MAIN
+    hdr->header.ncmds = 6;
     hdr->header.flags = MH_NOUNDEFS | MH_DYLDLINK | MH_TWOLEVEL | MH_PIE;
     
     size_t load_cmds_size = 
-        sizeof(struct segment_command_64) +  // PAGEZERO
-        sizeof(struct segment_command_64) + sizeof(struct section_64) +  // TEXT
-        sizeof(struct segment_command_64) +  // LINKEDIT
+        sizeof(struct segment_command_64) +
+        sizeof(struct segment_command_64) + sizeof(struct section_64) +
+        sizeof(struct segment_command_64) +
         sizeof(struct symtab_command) +
         sizeof(struct dysymtab_command) +
         sizeof(struct entry_point_command);
@@ -100,33 +97,29 @@ static void build_page0(macho_builder_t *builder) {
 static void build_text(macho_builder_t *builder) {
     macho_header_t *hdr = (macho_header_t *)builder->buffer;
     
-    // Calculate offsets
     size_t text_vmaddr = PAGE_SIZE_64; 
-    size_t text_fileoff = 0;  
+    size_t text_fileoff = 0;
     size_t code_fileoff = ALIGN_PAGE(builder->header_size); 
-    size_t text_filesize = code_fileoff + ALIGN_PAGE(builder->code_size);  // segment size
+    size_t text_filesize = code_fileoff + ALIGN_PAGE(builder->code_size);
     
-    builder->code_offset = code_fileoff;
-    
-    // __TEXT segment 
+    builder->code_offset = code_fileoff; 
     strncpy(hdr->text_segment.segname, "__TEXT", 16);
     hdr->text_segment.cmd = LC_SEGMENT_64;
     hdr->text_segment.cmdsize = sizeof(struct segment_command_64) + sizeof(struct section_64);
     hdr->text_segment.vmaddr = text_vmaddr;
     hdr->text_segment.vmsize = text_filesize;
-    hdr->text_segment.fileoff = text_fileoff;  // Starts at 0 
+    hdr->text_segment.fileoff = text_fileoff;
     hdr->text_segment.filesize = text_filesize;
     hdr->text_segment.maxprot = VM_PROT_READ | VM_PROT_EXECUTE;
     hdr->text_segment.initprot = VM_PROT_READ | VM_PROT_EXECUTE;
     hdr->text_segment.nsects = 1;
     hdr->text_segment.flags = 0;
     
-    // We only need the code part
     strncpy(hdr->text_section.sectname, "__text", 16);
     strncpy(hdr->text_section.segname, "__TEXT", 16);
-    hdr->text_section.addr = text_vmaddr + code_fileoff; 
+    hdr->text_section.addr = text_vmaddr + code_fileoff;
     hdr->text_section.size = builder->code_size;
-    hdr->text_section.offset = code_fileoff; 
+    hdr->text_section.offset = code_fileoff;
     hdr->text_section.align = 4;  
     hdr->text_section.reloff = 0;
     hdr->text_section.nreloc = 0;
@@ -143,7 +136,6 @@ static void build_text(macho_builder_t *builder) {
 static void build_linkedit(macho_builder_t *builder) {
     macho_header_t *hdr = (macho_header_t *)builder->buffer;
     
-    // __LINKEDIT comes after __TEXT segment
     size_t linkedit_fileoff = hdr->text_segment.fileoff + hdr->text_segment.filesize;
     size_t linkedit_vmaddr = hdr->text_segment.vmaddr + hdr->text_segment.vmsize;
     size_t linkedit_size = 2048;  
@@ -174,7 +166,7 @@ static void build_symtab(macho_builder_t *builder) {
     hdr->symtab_cmd.cmd = LC_SYMTAB;
     hdr->symtab_cmd.cmdsize = sizeof(struct symtab_command);
     hdr->symtab_cmd.symoff = builder->symtab_offset;
-    hdr->symtab_cmd.nsyms = 0;  // No symbols for now
+    hdr->symtab_cmd.nsyms = 0;
     hdr->symtab_cmd.stroff = builder->strtab_offset;
     hdr->symtab_cmd.strsize = builder->strtab_size;
     
@@ -187,7 +179,6 @@ static void build_dysymtab(macho_builder_t *builder) {
     hdr->dysymtab_cmd.cmd = LC_DYSYMTAB;
     hdr->dysymtab_cmd.cmdsize = sizeof(struct dysymtab_command);
     
-    // All zeros for minimal pieace
     hdr->dysymtab_cmd.ilocalsym = 0;
     hdr->dysymtab_cmd.nlocalsym = 0;
     hdr->dysymtab_cmd.iextdefsym = 0;
@@ -215,71 +206,44 @@ static void build_entry(macho_builder_t *builder) {
     
     hdr->entry_cmd.cmd = LC_MAIN;
     hdr->entry_cmd.cmdsize = sizeof(struct entry_point_command);
-    hdr->entry_cmd.entryoff = builder->code_offset;  // Entry at start of code
-    hdr->entry_cmd.stacksize = 0;  // Use default stack size
+    hdr->entry_cmd.entryoff = builder->code_offset;
+    hdr->entry_cmd.stacksize = 0;
     
     DBG("Built LC_MAIN command (entryoff=0x%llx)\n",
         hdr->entry_cmd.entryoff);
 }
 
-/**
- * Write code section
- */
 static void write_code(macho_builder_t *builder, const uint8_t *code, size_t code_size) {
     if (code_size != builder->code_size) {
-        DBG("Code size mismatch (%zu vs %zu)\n",
-            code_size, builder->code_size);
+        DBG("Code size mismatch (%zu vs %zu)\n", code_size, builder->code_size);
     }
     
-    // Calculate 
-    size_t aligned_size = ALIGN_PAGE(code_size);
-    
-    // Never hurt 
+    size_t aligned_size = ALIGN_PAGE(code_size); 
     if (builder->code_offset + aligned_size > builder->capacity) {
-        DBG("  Code offset: 0x%zx\n", builder->code_offset);
-        DBG("  Aligned size: 0x%zx\n", aligned_size);
-        DBG("  Required: 0x%zx\n", builder->code_offset + aligned_size);
-        DBG("  Capacity: 0x%zx\n", builder->capacity);
+        DBG("Code offset: 0x%zx, aligned: 0x%zx, required: 0x%zx, capacity: 0x%zx\n",
+            builder->code_offset, aligned_size, builder->code_offset + aligned_size, builder->capacity);
         return;
     }
     
-    // Copy 
     memcpy(builder->buffer + builder->code_offset, code, code_size);
     
-    // Zero-fill
     if (aligned_size > code_size) {
-        memset(builder->buffer + builder->code_offset + code_size, 0, 
-               aligned_size - code_size);
+        memset(builder->buffer + builder->code_offset + code_size, 0, aligned_size - code_size);
     }
     
-    DBG("Wrote %zu bytes of code at offset 0x%zx\n",
-        code_size, builder->code_offset);
-    DBG("  Aligned to %zu bytes\n", aligned_size);
+    DBG("Wrote %zu bytes at 0x%zx (aligned to %zu)\n", code_size, builder->code_offset, aligned_size);
 }
 
-/**
- * maybe later
- */
 static void init_symbol(macho_builder_t *builder) {
-    // Initialize string table with null byte
     builder->buffer[builder->strtab_offset] = '\0';
-    
-    // We Could add symbols here if needed, 
-    // but I don't think we need any
 }
 
 static size_t calculate_fsz(macho_builder_t *builder) { 
     macho_header_t *hdr = (macho_header_t *)builder->buffer;
-    
-    // Size = LINKEDIT end
-    size_t final_size = hdr->linkedit_segment.fileoff + hdr->linkedit_segment.filesize;
-    
-    return final_size;
+    return hdr->linkedit_segment.fileoff + hdr->linkedit_segment.filesize;
 }
 
-/**
- * The built structure
- */
+/* Validate the built structure */
 static bool macho_stuff(macho_builder_t *builder) { 
     macho_header_t *hdr = (macho_header_t *)builder->buffer;
 
@@ -312,8 +276,7 @@ static bool macho_stuff(macho_builder_t *builder) {
     
     size_t load_cmds_end = sizeof(struct mach_header_64) + hdr->header.sizeofcmds;
     if (load_cmds_end > builder->code_offset) {
-        DBG("[!] Load commands overlap with code\n");
-        DBG("                  Load cmds end: 0x%zx, Code offset: 0x%zx\n",
+        DBG("[!] Load commands overlap with code (end: 0x%zx, code: 0x%zx)\n",
             load_cmds_end, builder->code_offset);
         return false;
     }
@@ -331,11 +294,9 @@ static bool macho_stuff(macho_builder_t *builder) {
     }
     
     if (hdr->text_segment.vmaddr < hdr->pagezero_segment.vmaddr + hdr->pagezero_segment.vmsize) {
-        DBG("[!] __TEXT vmaddr overlaps with __PAGEZERO\n");
-        DBG("                  PAGEZERO: 0x%llx-0x%llx\n",
-            hdr->pagezero_segment.vmaddr,
-            hdr->pagezero_segment.vmaddr + hdr->pagezero_segment.vmsize);
-        DBG("                  TEXT: 0x%llx\n", hdr->text_segment.vmaddr);
+        DBG("[!] __TEXT overlaps __PAGEZERO (0x%llx-0x%llx vs 0x%llx)\n",
+            hdr->pagezero_segment.vmaddr, hdr->pagezero_segment.vmaddr + hdr->pagezero_segment.vmsize,
+            hdr->text_segment.vmaddr);
         return false;
     }
     
@@ -358,43 +319,37 @@ static bool macho_stuff(macho_builder_t *builder) {
     
     if (hdr->entry_cmd.entryoff < hdr->text_segment.fileoff ||
         hdr->entry_cmd.entryoff >= hdr->text_segment.fileoff + hdr->text_segment.filesize) {
-        DBG("[!] Entry point outside __TEXT segment\n");
+        DBG("[!] Entry point outside __TEXT\n");
         return false;
     }
-    DBG(" [+] Entry point within __TEXT segment\n");
     
     if (builder->code_size == 0 || builder->code_size > 100 * 1024 * 1024) {
         DBG("[!] Code size unreasonable (%zu bytes)\n", builder->code_size);
         return false;
     }
-    DBG(" [+] Code size reasonable (%zu bytes)\n", builder->code_size);
     
-    DBG("[+] All Passed\n");
+    DBG("[+] Validation passed\n");
     return true;
 }
 
-/**
- * Wrap code in Mach-O 
- */
+/* Wrap code in minimal Mach-O structure */
 uint8_t* wrap_macho(const uint8_t *code, size_t code_size, size_t *out_size) {
     if (!code || code_size == 0 || !out_size) {
         DBG("Invalid parameters\n");
         return NULL;
     }
     
-    if (code_size > 100 * 1024 * 1024) {  // 100MB limit
+    if (code_size > 100 * 1024 * 1024) {
         DBG("Code size too large (%zu bytes)\n", code_size);
         return NULL;
     }
     
-    // Initialize builder
     macho_builder_t *builder = builder_init(code_size);
     if (!builder) {
         DBG("Failed to initialize builder\n");
         return NULL;
     }
     
-    // Build all 
     build_header(builder);
     build_page0(builder);
     build_text(builder);
@@ -403,7 +358,6 @@ uint8_t* wrap_macho(const uint8_t *code, size_t code_size, size_t *out_size) {
     build_dysymtab(builder);
     build_entry(builder);
     
-    // Write code section
     write_code(builder, code, code_size);
     init_symbol(builder);
     
@@ -417,15 +371,16 @@ uint8_t* wrap_macho(const uint8_t *code, size_t code_size, size_t *out_size) {
     *out_size = final_size;
     
     uint8_t *result = builder->buffer;
-    builder->buffer = NULL;  // can't stand double-free
+    builder->buffer = NULL; // Prevent double-free
     
     builder_free(builder);
     
-    DBG("Mach-O binary (%zu bytes)\n", final_size);
+    DBG("Built Mach-O (%zu bytes)\n", final_size);
     
     return result;
 }
 
+/* Quick Mach-O validation */
 bool V_machO(const uint8_t *data, size_t size) { 
     if (!data || size < sizeof(struct mach_header_64)) {
         return false;
@@ -447,14 +402,10 @@ bool V_machO(const uint8_t *data, size_t size) {
     }
 #endif
     
-    // Check file type
-    if (mh->filetype != MH_EXECUTE && 
-        mh->filetype != MH_DYLIB && 
-        mh->filetype != MH_BUNDLE) {
+    if (mh->filetype != MH_EXECUTE && mh->filetype != MH_DYLIB && mh->filetype != MH_BUNDLE) {
         return false;
     }
     
-    // Verify load commands fit in file
     size_t load_cmds_size = sizeof(struct mach_header_64) + mh->sizeofcmds;
     if (load_cmds_size > size) {
         return false;
