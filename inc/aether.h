@@ -85,7 +85,7 @@
 #define ALIGN_PAGE(x) (((x) + PAGE_SIZE_64 - 1) & ~(PAGE_SIZE_64 - 1))
 #define ALIGN_8(x) (((x) + 7) & ~7)
 
-#define MX_GEN 4 
+#define MX_GEN 3
 static const uint8_t MORPH_MAGIC[8] = {'A', 'E', 'T', 'H', 'R', 0, 0, 0};
 
 /* DEBUG=1 (FOO flag) */
