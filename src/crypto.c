@@ -1,29 +1,13 @@
 #include <aether.h>
 
-/**
- * AES encrypt/decrypt with PKCS7 padding
- * 
- * Note: Returns actual bytes written which may differ from input size
- * due to padding. We only copy up to 'size' bytes to dst to avoid
- * buffer overruns (callers typically allocate exactly 'size').
- */
+/* AES encrypt/decrypt with PKCS7 padding */
 __attribute__((always_inline))
-size_t crypt_payload(const int mode,
-                     const uint8_t *key,
-                     const uint8_t *iv,
-                     const uint8_t *src,
-                     uint8_t *dst,
-                     const size_t size)
-{
+size_t crypt_payload(const int mode, const uint8_t *key, const uint8_t *iv,
+                     const uint8_t *src, uint8_t *dst, const size_t size) {
     CCCryptorRef ctx = NULL;
-    CCCryptorStatus status = CCCryptorCreate(mode ? kCCEncrypt : kCCDecrypt,
-                                             kCCAlgorithmAES,
-                                             kCCOptionPKCS7Padding,
-                                             key, KEY_SIZE,
-                                             iv,
-                                             &ctx);
-    if (status != kCCSuccess || ctx == NULL)
-        return 0;
+    CCCryptorStatus status = CCCryptorCreate(mode ? kCCEncrypt : kCCDecrypt, kCCAlgorithmAES,
+                                             kCCOptionPKCS7Padding, key, KEY_SIZE, iv, &ctx);
+    if (status != kCCSuccess || ctx == NULL) return 0;
 
     size_t max_out = size + kCCBlockSizeAES128;
     uint8_t *tmp = (uint8_t*)malloc(max_out);
@@ -49,22 +33,18 @@ size_t crypt_payload(const int mode,
     }
 
     size_t total = written + finalWritten;
-
     size_t to_copy = (total > size) ? size : total;
-    if (to_copy > 0 && dst != NULL)
-        memcpy(dst, tmp, to_copy);
+    if (to_copy > 0 && dst != NULL) memcpy(dst, tmp, to_copy);
 
     free(tmp);
     CCCryptorRelease(ctx);
     return to_copy;
 }
 
-// Encrypt wrapper
 size_t cipher(const uint8_t *key, const uint8_t *iv, const uint8_t *src, uint8_t *dst, const size_t size) {
     return crypt_payload(kCCEncrypt, key, iv, src, dst, size);
 }
 
-// Decrypt wrapper
 size_t decipher(const uint8_t *key, const uint8_t *iv, const uint8_t *src, uint8_t *dst, const size_t size) {
     return crypt_payload(kCCDecrypt, key, iv, src, dst, size);
 }
