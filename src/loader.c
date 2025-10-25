@@ -1,13 +1,9 @@
 #include <aether.h>
 
-/**
- * Simple Loader for macOS
- * Loads a Mach-O binary directly from memory without touching disk.
- */
+/* Reflective Mach-O loader maps from memory without disk */
 
 static void unload_image(image_t *image);
 
-// Global
 static image_t *loaded_images[LOADED_IMAGES] = {NULL};
 static size_t num_loaded_images = 0;
 static pthread_mutex_t images_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -28,9 +24,6 @@ static void reg_loaded(image_t *image) {
     pthread_mutex_unlock(&images_mutex);
 }
 
-/**
- * Call on exit
- */
 __attribute__((destructor))
 static void cleanup_loaded(void) {
     pthread_mutex_lock(&images_mutex);
@@ -47,20 +40,16 @@ static void cleanup_loaded(void) {
     pthread_mutex_unlock(&images_mutex);
 }
 
-/**
- * Validate Mach-O header
- */
 static bool validate_macho(uint8_t *data, size_t size) {
     if (!data || size < sizeof(struct mach_header_64)) {
-        DBG("Size too small\n"); // Ohh 
+        DBG("Size too small\n");
         return false;
     }
     
     struct mach_header_64 *mh = (struct mach_header_64 *)data;
     
     if (mh->magic != MH_MAGIC_64) {
-        DBG("Magic (0x%x), expected 0x%x\n", 
-            mh->magic, MH_MAGIC_64);
+        DBG("Magic (0x%x), expected 0x%x\n", mh->magic, MH_MAGIC_64);
         return false;
     }
     
@@ -68,9 +57,7 @@ static bool validate_macho(uint8_t *data, size_t size) {
         return false;
     }
     
-    if (mh->filetype != MH_EXECUTE && 
-        mh->filetype != MH_DYLIB && 
-        mh->filetype != MH_BUNDLE) {
+    if (mh->filetype != MH_EXECUTE && mh->filetype != MH_DYLIB && mh->filetype != MH_BUNDLE) {
         return false;
     }
     
@@ -82,11 +69,7 @@ static bool validate_macho(uint8_t *data, size_t size) {
     return true;
 }
 
-/**
- * Find entry point from LC_MAIN or LC_UNIXTHREAD
- * mh points to ORIGINAL data (with unmodified vmaddrs)
- *      base is the actual mapped memory location keep that in mind 
- */
+/* Find entry point mh is original data, base is mapped memory */
 static void* find_entry(struct mach_header_64 *mh, void *base) {
     uint8_t *ptr = (uint8_t *)mh + sizeof(struct mach_header_64);
     
@@ -108,35 +91,28 @@ static void* find_entry(struct mach_header_64 *mh, void *base) {
         scan_ptr += lc->cmdsize;
     }
     
-    // Now find entry point
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         struct load_command *lc = (struct load_command *)ptr;
         
         if (lc->cmd == LC_MAIN) {
             struct entry_point_command *ep = (struct entry_point_command *)lc;
             void *entry = (uint8_t *)base + ep->entryoff;
-            DBG("Found LC_MAIN entry point at file offset 0x%llx -> %p\n", 
-                   ep->entryoff, entry);
+            DBG("LC_MAIN entry at 0x%llx -> %p\n", ep->entryoff, entry);
             return entry;
         }
         
         if (lc->cmd == LC_UNIXTHREAD) {
-            // We need to adjust it relative to our base
             #if defined(__x86_64__)
-            x86_thread_state64_t *state = 
-                (x86_thread_state64_t *)((uint8_t *)lc + sizeof(struct thread_command));
+            x86_thread_state64_t *state = (x86_thread_state64_t *)((uint8_t *)lc + sizeof(struct thread_command));
             uint64_t entry_vmaddr = state->__rip;
             void *entry = (uint8_t *)base + (entry_vmaddr - min_vmaddr);
-            DBG("Found LC_UNIXTHREAD entry point at vmaddr 0x%llx -> %p\n", 
-                   entry_vmaddr, entry);
+            DBG("LC_UNIXTHREAD entry at 0x%llx -> %p\n", entry_vmaddr, entry);
             return entry;
             #elif defined(__aarch64__)
-            arm_thread_state64_t *state = 
-                (arm_thread_state64_t *)((uint8_t *)lc + sizeof(struct thread_command));
+            arm_thread_state64_t *state = (arm_thread_state64_t *)((uint8_t *)lc + sizeof(struct thread_command));
             uint64_t entry_vmaddr = state->__pc;
             void *entry = (uint8_t *)base + (entry_vmaddr - min_vmaddr);
-            DBG("Found LC_UNIXTHREAD entry point at vmaddr 0x%llx -> %p\n", 
-                   entry_vmaddr, entry);
+            DBG("LC_UNIXTHREAD entry at 0x%llx -> %p\n", entry_vmaddr, entry);
             return entry;
             #endif
         }
@@ -148,30 +124,16 @@ static void* find_entry(struct mach_header_64 *mh, void *base) {
     return NULL;
 }
 
-/**
- * Find and execute constructors (__mod_init_func section)
- * 
- * We don't have a __DATA segment with constructors.
- * The mutated code itself is the "constructor" it runs when loaded.
- * This function is here for completeness but won't find anything in our case.
- */
+/* No constructors in our wrapped code it executes directly */
 static void run_constructors(uint8_t *original_data, size_t size, void *base) {
-    (void)original_data;
-    (void)size;
-    (void)base;
-    
-    // For our use case (wrapping mutated code), there are no constructors
-    // The code itself executes directly
-    DBG("No constructors to run (code executes directly)\n");
+    (void)original_data; (void)size; (void)base;
+    DBG("No constructors\n");
 }
 
-/**
- * Map Mach-O into executable memory
- */
+/* Map Mach-O segments into RWX memory */
 static void* map_executable(uint8_t *data, size_t size) {
     struct mach_header_64 *mh = (struct mach_header_64 *)data;
     
-    // Calculate total VM size needed
     uint64_t min_vmaddr = UINT64_MAX;
     uint64_t max_vmaddr = 0;
     
@@ -179,7 +141,6 @@ static void* map_executable(uint8_t *data, size_t size) {
     uint8_t *end = (uint8_t *)data + size;
     
     for (uint32_t i = 0; i < mh->ncmds; i++) {
-        // Bounds check
         if (ptr + sizeof(struct load_command) > end) {
             DBG("Load command %u extends beyond file\n", i);
             return NULL;
@@ -187,9 +148,7 @@ static void* map_executable(uint8_t *data, size_t size) {
         
         struct load_command *lc = (struct load_command *)ptr;
         
-        // Validate cmdsize
-        if (lc->cmdsize < sizeof(struct load_command) || 
-            ptr + lc->cmdsize > end) {
+        if (lc->cmdsize < sizeof(struct load_command) || ptr + lc->cmdsize > end) {
             DBG("Load command %u has invalid size\n", i);
             return NULL;
         }
@@ -225,9 +184,7 @@ static void* map_executable(uint8_t *data, size_t size) {
     
     size_t total_size = max_vmaddr - min_vmaddr;
     
-    // Allocate RWX memory for the entire image
-    void *base = mmap(NULL, total_size, 
-                      PROT_READ | PROT_WRITE | PROT_EXEC,
+    void *base = mmap(NULL, total_size, PROT_READ | PROT_WRITE | PROT_EXEC,
                       MAP_PRIVATE | MAP_ANON, -1, 0);
     
     if (base == MAP_FAILED) {
@@ -237,7 +194,6 @@ static void* map_executable(uint8_t *data, size_t size) {
     
     DBG("Allocated %zu bytes at %p (RWX)\n", total_size, base);
     
-    // Map each segment
     ptr = (uint8_t *)mh + sizeof(struct mach_header_64);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         if (ptr + sizeof(struct load_command) > end) {
@@ -248,16 +204,13 @@ static void* map_executable(uint8_t *data, size_t size) {
         
         struct load_command *lc = (struct load_command *)ptr;
         
-        // Validate cmdsize
-        if (lc->cmdsize < sizeof(struct load_command) || 
-            ptr + lc->cmdsize > end) {
+        if (lc->cmdsize < sizeof(struct load_command) || ptr + lc->cmdsize > end) {
             DBG("Load command %u has invalid size\n", i);
             munmap(base, total_size);
             return NULL;
         }
         
-        if (lc->cmd == LC_SEGMENT_64) {
-            // second pass 
+        if (lc->cmd == LC_SEGMENT_64) { 
             if (lc->cmdsize < sizeof(struct segment_command_64)) {
                 DBG("LC_SEGMENT_64 command too small\n");
                 munmap(base, total_size);
@@ -271,7 +224,6 @@ static void* map_executable(uint8_t *data, size_t size) {
                 continue;
             }
             
-            // Calculate dst
             void *dest = (uint8_t *)base + (seg->vmaddr - min_vmaddr);
             void *src = data + seg->fileoff;
             
@@ -287,36 +239,28 @@ static void* map_executable(uint8_t *data, size_t size) {
                 return NULL;
             }
             
-            // Copy segment data
             memcpy(dest, src, seg->filesize);
             
             if (seg->vmsize > seg->filesize) {
-                memset((uint8_t *)dest + seg->filesize, 0, 
-                       seg->vmsize - seg->filesize);
+                memset((uint8_t *)dest + seg->filesize, 0, seg->vmsize - seg->filesize);
             }
             
-            DBG("Mapped segment %s: vmaddr=0x%llx, size=0x%llx\n",
-                seg->segname, seg->vmaddr, seg->vmsize);
+            DBG("Mapped %s: vmaddr=0x%llx, size=0x%llx\n", seg->segname, seg->vmaddr, seg->vmsize);
         }
         
         ptr += lc->cmdsize;
     }
     
-    DBG("We mapped all segments\n");
+    DBG("All segments mapped\n");
     
     return base;
 }
 
-/**
- * Parse Mach-O and prepare for execution
- */
+/* Parse and map Mach-O */
 static image_t* prase_macho(uint8_t *data, size_t size) { 
+    if (!validate_macho(data, size)) return NULL;
     
-    if (!validate_macho(data, size)) {
-        return NULL;
-    }
-    
-    DBG("Ok\n");
+    DBG("Validation passed\n");
     
     image_t *image = calloc(1, sizeof(image_t));
     if (!image) {
@@ -324,9 +268,8 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
         return NULL;
     }
     
-    DBG("Calling map_executable\n");
+    DBG("Mapping executable\n");
     
-    // Map into executable memory
     image->base = map_executable(data, size);
     if (!image->base) {
         DBG("map_executable failed\n");
@@ -334,28 +277,22 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
         return NULL;
     }
     
-    DBG("map_executable succeeded, base=%p\n", image->base);
+    DBG("Mapped at %p\n", image->base);
     
     image->size = size;
-    image->original_data = data;  // Keep reference to original data
-    image->header = (struct mach_header_64 *)image->base;  // Header is NOW in mapped memory
+    image->original_data = data;
+    image->header = (struct mach_header_64 *)image->base;
     image->loaded = true;
     
-    DBG("Verifying mapped header\n");
-    
-    // Verify
     if (image->header->magic != MH_MAGIC_64) {
-        DBG("Mapped header has invalid magic: 0x%x\n", 
-               image->header->magic);
+        DBG("Mapped header invalid: 0x%x\n", image->header->magic);
         munmap(image->base, image->size);
         free(image);
         return NULL;
     }
     
-    DBG("Mapped header valid (magic=0x%x, ncmds=%u)\n",
-           image->header->magic, image->header->ncmds);
+    DBG("Header valid (magic=0x%x, ncmds=%u)\n", image->header->magic, image->header->ncmds);
     
-    // We need the ORIGINAL data for reading load commands
     struct mach_header_64 *original_header = (struct mach_header_64 *)data;
     image->entry_point = find_entry(original_header, image->base);
     
@@ -366,8 +303,7 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
         return NULL;
     }
     
-    DBG("Parse is Aight\n");
-    
+    DBG("Parse complete\n");
     return image;
 }
 
@@ -377,17 +313,12 @@ static bool execute_image(image_t *image) {
         return false;
     }
     
-    // Run constructors if any
     run_constructors(image->original_data, image->size, image->base);
     
-    // For our wrapped mutated code, the entry point IS the mutated code
-    // We don't actually need to call it just having it loaded in RWX memory
-    // is enough. The mutations have been applied and the code is ready.
     if (image->entry_point) {
-        DBG("Entry point at %p \n", image->entry_point);
+        DBG("Entry at %p\n", image->entry_point);
     }
     
-    // The mutated code is now in RWX memory and can execute
     return true;
 }
 
@@ -403,17 +334,13 @@ static void unload_image(image_t *image) {
 }
 
 static bool code_integrity(image_t *image) {
-    if (!image || !image->base || !image->header) {
-        return false;
-    }
+    if (!image || !image->base || !image->header) return false;
     
-    // is still valid in mapped memory
     if (image->header->magic != MH_MAGIC_64) {
-        DBG("Header corrupted during mapping\n");
+        DBG("Header corrupted\n");
         return false;
     }
     
-    // Use original data to read load commands 
     struct mach_header_64 *original_header = (struct mach_header_64 *)image->original_data;
     uint8_t *ptr = (uint8_t *)original_header + sizeof(struct mach_header_64);
     uint8_t *end = image->original_data + image->size;
@@ -454,20 +381,11 @@ static bool code_integrity(image_t *image) {
         return false;
     }
     
-    DBG("Code integrity verification passed\n");
+    DBG("Integrity check passed\n");
     return true;
 }
 
-/**
- * Load and execute 
- * 
- * This is the core reflective:
- * 1. Validates the structure
- * 2. Maps it into RWX memory
- * 3. Resolves any necessary relocations
- * 4. Executes constructors
- * 5. If we want we can call the entry point
- */
+/* Core reflective loader - validates, maps to RWX, executes */
 bool exec_mem(uint8_t *data, size_t size) { 
     if (!data || size == 0) {
         DBG("Invalid (data=%p, size=%zu)\n", data, size);
@@ -479,7 +397,6 @@ bool exec_mem(uint8_t *data, size_t size) {
         return false;
     }
     
-    // Parse and map
     image_t *image = prase_macho(data, size);
     if (!image) {
         return false;
@@ -495,7 +412,6 @@ bool exec_mem(uint8_t *data, size_t size) {
         return false;
     }
     
-    // Execute
     bool success = execute_image(image);
     
     if (success) {
@@ -506,10 +422,8 @@ bool exec_mem(uint8_t *data, size_t size) {
         return false;
     }
     
-    // Register the image for cleanup on exit
-    // The code needs to stay in memory to continue executing
     if (success) {
-        reg_loaded(image);
+        reg_loaded(image); // Keep in memory
     } else {
         unload_image(image);
     }
