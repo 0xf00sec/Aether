@@ -37,7 +37,7 @@ SRCS := $(SRC_DIR)/engine.c \
         $(SRC_DIR)/prng.c \
         $(SRC_DIR)/tuer.c \
         $(SRC_DIR)/crypto.c \
-        $(SRC_DIR)/kill.c \
+        $(SRC_DIR)/hunt.c \
         $(SRC_DIR)/parasite.c \
         $(SRC_DIR)/antidebug.c \
         $(SRC_DIR)/loader.c \
