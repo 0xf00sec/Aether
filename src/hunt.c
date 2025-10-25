@@ -1,14 +1,4 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <libproc.h>
-#include <limits.h>
-#include <unistd.h>
-#include <sys/stat.h>
-#include <signal.h>
-#include <pthread.h>
-#include <ctype.h>
-#include <time.h>
+#include <aether.h>
 
 /* DJB2 hash for process name matching */
 static uint32_t hash_str(const char *str) {
