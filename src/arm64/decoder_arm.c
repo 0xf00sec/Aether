@@ -1,10 +1,10 @@
 #include <aether.h>
 
-/* https://www.coranac.com/tonc/text/asm.htm */
+/* https:/*www.coranac.com/tonc/text/asm.htm */ */
 
 #if defined(ARCH_ARM)
 
-// Read u32 little-endian
+/* Read u32 little-endian */
 static inline uint32_t rd_u32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
@@ -24,21 +24,21 @@ static inline int64_t sxt64(uint64_t v, int nbits) {
     return (int64_t)((v ^ m) - m);
 }
 
-// Track register read (up to 4 per instruction)
+/* Track register read (up to 4 per instruction) */
 static inline void track_read(arm64_inst_t *out, arm_reg_t reg) {
     if (reg < 32 && out->num_regs_read < 4) {
         out->regs_read[out->num_regs_read++] = reg;
     }
 }
 
-// Track register write (up to 2 per instruction)
+/* Track register write (up to 2 per instruction) */
 static inline void track_write(arm64_inst_t *out, arm_reg_t reg) {
     if (reg < 32 && out->num_regs_written < 2) {
         out->regs_written[out->num_regs_written++] = reg;
     }
 }
 
-// Does this instruction modify PC?
+/* Does this instruction modify PC? */
 static bool is_cfi(uint32_t insn) {
     if ((insn & 0x7C000000u) == 0x14000000u) return true;                   
     if ((insn & 0xFF000010u) == 0x54000000u) return true;                   
@@ -48,7 +48,7 @@ static bool is_cfi(uint32_t insn) {
     return false;
 }
 
-// Privileged instruction? (needs EL1+)
+/* Privileged instruction? (needs EL1+) */
 static bool is_priv(uint32_t insn) {
     if ((insn & 0xFFE0001Fu) == 0xD4000001u) return true;                   
     if ((insn & 0xFFC00000u) == 0xD5000000u) return true;                   
@@ -81,7 +81,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
     out->num_regs_read = 0;
     out->num_regs_written = 0;                   
     
-    // B/BL (unconditional branch immediate)
+    /* B/BL (unconditional branch immediate) */
     if ((insn & 0x7C000000u) == 0x14000000u) {
         const uint32_t imm26 = bits(insn, 25, 0);
         const int64_t off    = sxt64(imm26, 26) << 2;
@@ -95,12 +95,12 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         out->modifies_ip     = true;
         
         if (link) {
-            track_write(out, ARM64_REG_X30);  // LR is written
+            track_write(out, ARM64_REG_X30);  /* LR is written */
         }
         return true;
     }
 
-    // B.cond (conditional branch)
+    /* B.cond (conditional branch) */
     if ((insn & 0xFF000010u) == 0x54000000u) {
         const uint32_t imm19 = bits(insn, 23, 5);
         const int64_t off    = sxt64(imm19, 19) << 2;
@@ -115,7 +115,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
     
-    // CBZ/CBNZ (compare and branch on zero/nonzero)
+    /* CBZ/CBNZ (compare and branch on zero/nonzero) */
     if ((insn & 0x7E000000u) == 0x34000000u) {
         const bool sf        = (insn >> 31) & 1;
         const bool nz        = (insn >> 24) & 1;
@@ -135,7 +135,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
     
-    // TBZ/TBNZ (test bit and branch)
+    /* TBZ/TBNZ (test bit and branch) */
     if ((insn & 0x7E000000u) == 0x36000000u) {
         const bool b5        = (insn >> 31) & 1;
         const bool nz        = (insn >> 24) & 1;
@@ -147,7 +147,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         
         out->type            = nz ? ARM_OP_TBNZ : ARM_OP_TBZ;
         out->rd              = rt;
-        out->imm             = bit;  // Bit position
+        out->imm             = bit;  /* Bit position */
         out->target          = off;
         out->is_control_flow = true;
         out->modifies_ip     = true;
@@ -156,7 +156,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
 
-    // BR (branch to register)
+    /* BR (branch to register) */
     if ((insn & 0xFFFFFC1Fu) == 0xD61F0000u) {
         const arm_reg_t reg_n = rn(insn);
         
@@ -169,7 +169,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
     
-    // BLR (branch with link to register)
+    /* BLR (branch with link to register) */
     if ((insn & 0xFFFFFC1Fu) == 0xD63F0000u) {
         const arm_reg_t reg_n = rn(insn);
         
@@ -179,11 +179,11 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         out->modifies_ip     = true;
         
         track_read(out, reg_n);
-        track_write(out, ARM64_REG_X30);  // LR is written
+        track_write(out, ARM64_REG_X30);  /* LR is written */
         return true;
     }
 
-    // RET (return from subroutine)
+    /* RET (return from subroutine) */
     if ((insn & 0xFFFFFC1Fu) == 0xD65F0000u) {
         const arm_reg_t reg_n = rn(insn);
         
@@ -196,7 +196,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
 
-    // Add/Sub (immediate)
+    /* Add/Sub (immediate) */
     if ((insn & 0x1F000000u) == 0x11000000u) {
         const bool sf        = (insn >> 31) & 1;
         const bool op        = (insn >> 30) & 1;
@@ -206,7 +206,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         const arm_reg_t reg_d = rd(insn);
         const arm_reg_t reg_n = rn(insn);
 
-        // CMP/CMN are aliases when rd == XZR
+        /* CMP/CMN are aliases when rd == XZR */
         if (S && reg_d == 31) {
             out->type = op ? ARM_OP_CMP : ARM_OP_CMN;
             out->rn   = reg_n;
@@ -225,7 +225,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
 
-    // Add/Sub (register)
+    /* Add/Sub (register) */
     if ((insn & 0x1F000000u) == 0x0B000000u) {
         const bool sf        = (insn >> 31) & 1;
         const bool op        = (insn >> 30) & 1;
@@ -236,7 +236,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         const uint8_t shift   = bits(insn, 23, 22);
         const uint8_t amount  = bits(insn, 15, 10);
 
-        // CMP/CMN are aliases when rd == XZR
+        /* CMP/CMN are aliases when rd == XZR */
         if (S && reg_d == 31) {
             out->type = op ? ARM_OP_CMP : ARM_OP_CMN;
             out->rn   = reg_n;
@@ -259,7 +259,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
     
-    // Logical (shifted register) + MOV alias
+    /* Logical (shifted register) + MOV alias */
     if ((insn & 0x1F000000u) == 0x0A000000u) {
         const bool sf        = (insn >> 31) & 1;
         const uint32_t opc   = bits(insn, 30, 29);
@@ -269,7 +269,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         const arm_reg_t reg_n = rn(insn);
         const arm_reg_t reg_m = rm(insn);
 
-        // MOV (register) is an alias of ORR with rn == XZR
+        /* MOV (register) is an alias of ORR with rn == XZR */
         if (opc == 1 && reg_n == 31 && shift == 0 && imm6 == 0) {
             out->type     = ARM_OP_MOV;
             out->rd       = reg_d;
@@ -280,7 +280,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
             return true;
         }
 
-        // TST is an alias of ANDS with rd == XZR
+        /* TST is an alias of ANDS with rd == XZR */
         if (opc == 3 && reg_d == 31) {
             out->type = ARM_OP_TST;
             out->rn   = reg_n;
@@ -292,7 +292,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
                 case 0: out->type = ARM_OP_AND; break;
                 case 1: out->type = ARM_OP_ORR; break;
                 case 2: out->type = ARM_OP_EOR; break;
-                case 3: out->type = ARM_OP_AND; break;  // ANDS
+                case 3: out->type = ARM_OP_AND; break;  /* ANDS */
             }
             out->rd = reg_d;
             out->rn = reg_n;
@@ -308,7 +308,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
     
-    // Data-processing (3 source): MADD, MSUB, SMULL, UMULL, etc.
+    /* Data-processing (3 source): MADD, MSUB, SMULL, UMULL, etc. */
     if ((insn & 0x1F000000u) == 0x1B000000u) {
         const bool sf        = (insn >> 31) & 1;
         const uint32_t op54  = bits(insn, 23, 21);
@@ -320,7 +320,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         
         if (op54 == 0) {
             if (reg_a == 31) {
-                // MUL is an alias of MADD with ra == XZR
+                /* MUL is an alias of MADD with ra == XZR */
                 out->type = ARM_OP_MUL;
                 out->rd   = reg_d;
                 out->rn   = reg_n;
@@ -344,7 +344,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         }
     }
     
-    // Data-processing (2 source): UDIV, SDIV, LSLV, LSRV, ASRV, RORV
+    /* Data-processing (2 source): UDIV, SDIV, LSLV, LSRV, ASRV, RORV */
     if ((insn & 0x1FE00000u) == 0x1AC00000u) {
         const bool sf        = (insn >> 31) & 1;
         const uint32_t opcode = bits(insn, 15, 10);
@@ -375,7 +375,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
 
-    // Move wide (immediate): MOVN/MOVZ/MOVK
+    /* Move wide (immediate): MOVN/MOVZ/MOVK */
     if ((insn & 0x1F800000u) == 0x12800000u) {
         const bool sf        = (insn >> 31) & 1;
         const uint32_t opc   = bits(insn, 30, 29);
@@ -390,26 +390,26 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         
         track_write(out, reg_d);
 
-        if (opc == 2) {  // MOVZ
+        if (opc == 2) {  /* MOVZ */
             out->imm      = imm16 << shift;
             out->imm_size = sf ? 64 : 32;
             return true;
-        } else if (opc == 0) {  // MOVN
+        } else if (opc == 0) {  /* MOVN */
             const uint64_t width_mask = sf ? 0xFFFFFFFFFFFFFFFFULL : 0x00000000FFFFFFFFULL;
             const uint64_t v = (imm16 << shift);
             out->imm      = (~v) & width_mask;
             out->imm_size = sf ? 64 : 32;
             return true;
-        } else if (opc == 3) {  // MOVK
-            // MOVK keeps existing bits, only modifies 16-bit field
+        } else if (opc == 3) {  /* MOVK */
+            /* MOVK keeps existing bits, only modifies 16-bit field */
             out->imm      = imm16 | (shift << 32);
             out->imm_size = 16;
-            track_read(out, reg_d);  // Also reads destination
+            track_read(out, reg_d);  /* Also reads destination */
             return true;
         }
     }
     
-    // ADRP (form PC-relative address to 4KB page)
+    /* ADRP (form PC-relative address to 4KB page) */
     if ((insn & 0x9F000000u) == 0x90000000u) {
         const uint32_t immlo = bits(insn, 30, 29);
         const uint32_t immhi = bits(insn, 23, 5);
@@ -425,7 +425,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
     
-    // ADR (form PC-relative address)
+    /* ADR (form PC-relative address) */
     if ((insn & 0x9F000000u) == 0x10000000u) {
         const uint32_t immlo = bits(insn, 30, 29);
         const uint32_t immhi = bits(insn, 23, 5);
@@ -441,7 +441,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
     
-    // Load/Store (unsigned immediate)
+    /* Load/Store (unsigned immediate) */
     if ((insn & 0x3B000000u) == 0x39000000u) {
         const uint32_t size  = bits(insn, 31, 30);
         const uint32_t opc   = bits(insn, 23, 22);
@@ -454,12 +454,12 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
 
         if (opc == 0) {
             out->type = ARM_OP_STR;
-            track_read(out, reg_t);   // STR reads from rt
-            track_read(out, reg_n);   // Base register
+            track_read(out, reg_t);   /* STR reads from rt */
+            track_read(out, reg_n);   /* Base register */
         } else if (opc == 1) {
             out->type = ARM_OP_LDR;
-            track_write(out, reg_t);  // LDR writes to rt
-            track_read(out, reg_n);   // Base register
+            track_write(out, reg_t);  /* LDR writes to rt */
+            track_read(out, reg_n);   /* Base register */
         } else {
             out->valid = false;
             return false;
@@ -473,7 +473,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
     
-    // Load/Store pair (signed offset)
+    /* Load/Store pair (signed offset) */
     if ((insn & 0x3A000000u) == 0x28000000u) {
         const uint32_t opc   = bits(insn, 31, 30);
         const bool L         = (insn >> 22) & 1;
@@ -482,7 +482,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         const arm_reg_t reg_t2 = rt2(insn);
         const arm_reg_t reg_n = rn(insn);
         
-        const uint32_t scale = (opc == 0) ? 2 : 3;  // 32-bit or 64-bit
+        const uint32_t scale = (opc == 0) ? 2 : 3;  /* 32-bit or 64-bit */
         const int64_t offset = imm7 << scale;
         
         if (L) {
@@ -498,21 +498,21 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         }
         
         out->rd       = reg_t;
-        out->rm       = reg_t2;  // Reuse rm for second register
+        out->rm       = reg_t2;  /* Reuse rm for second register */
         out->rn       = reg_n;
         out->imm      = offset;
         out->is_64bit = (opc == 2);
         return true;
     }
     
-    // NOP and hint instructions
+    /* NOP and hint instructions */
     if ((insn & 0xFFFFFFFFu) == 0xD503201Fu) {
         out->type  = ARM_OP_NOP;
         out->valid = true;
         return true;
     }
 
-    // SVC (supervisor call)
+    /* SVC (supervisor call) */
     if ((insn & 0xFFE0001Fu) == 0xD4000001u) {
         out->type          = ARM_OP_SVC;
         out->imm           = bits(insn, 20, 5);
@@ -522,7 +522,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
 
-    // MRS (move system register to general-purpose register)
+    /* MRS (move system register to general-purpose register) */
     if ((insn & 0xFFF00000u) == 0xD5300000u) {
         const arm_reg_t reg_t = rd(insn);
         
@@ -536,7 +536,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
 
-    // MSR (move general-purpose register to system register)
+    /* MSR (move general-purpose register to system register) */
     if ((insn & 0xFFF00000u) == 0xD5100000u) {
         const arm_reg_t reg_t = rd(insn);
         
@@ -550,7 +550,7 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
 
-    // SYS (system instruction)
+    /* SYS (system instruction) */
     if ((insn & 0xFFC00000u) == 0xD5000000u) {
         out->type          = ARM_OP_SYS;
         out->imm           = bits(insn, 20, 5);
@@ -560,9 +560,9 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
         return true;
     }
 
-    // If we reach here, instruction is not recognized
+    /* If we reach here, instruction is not recognized */
     out->valid = false;
     return false;
 }
 
-#endif  // ARCH_ARM   
+#endif  /* ARCH_ARM    */
