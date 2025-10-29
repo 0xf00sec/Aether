@@ -317,9 +317,9 @@ void pulse_live(liveness_state_t *state, size_t offset, const void *inst_ptr) {
 
 static inline bool is_stackp(uint8_t reg) { 
 #if defined(ARCH_X86)
-    return reg == 4 || reg == 5; // RSP or RBP
+    return reg == 4 || reg == 5; /*  RSP or RBP */
 #elif defined(ARCH_ARM)
-    return reg == 31 || reg == 29 || reg == 30; // SP, FP, LR
+    return reg == 31 || reg == 29 || reg == 30; /*  SP, FP, LR */
 #else
     return reg == 4 || reg == 5;
 #endif
@@ -435,10 +435,10 @@ uint8_t jack_reg(const liveness_state_t *state, uint8_t original_reg,
     uint8_t candidates[8] = {0};
     uint8_t num_candidates = 0;
     
-    // Prefer volatile (caller-saved), non-live registers
+    /*  Prefer volatile (caller-saved), non-live registers */
     for (uint8_t reg = 0; reg < 8; reg++) {
         if (reg == original_reg) continue;
-        if (reg == 3 || reg == 4 || reg == 5) continue;  // Never RBX/RSP/RBP
+        if (reg == 3 || reg == 4 || reg == 5) continue;  /*  Never RBX/RSP/RBP */
         
         bool is_safe = false;
         if (!state->regs[reg].iz_live) {
@@ -467,10 +467,10 @@ uint8_t jack_reg(const liveness_state_t *state, uint8_t original_reg,
         }
     }
     
-    // Validate selected register
+    /*  Validate selected register */
     if (num_candidates > 0) {
         uint8_t selected = candidates[chacha20_random(rng) % num_candidates];
-        // Paranoid 
+        /*  Paranoid  */
         if (is_stackp(selected)) {
             return original_reg;
         }
@@ -512,17 +512,17 @@ size_t snap_len(const uint8_t *code, size_t maxlen) {
 #endif
 }
 
-// Validate a chunk of code
+/*  Validate a chunk of code */
 __attribute__((always_inline)) inline bool is_chunk_ok(const uint8_t *code, size_t max_len) {
     if (!code || max_len == 0) return false;
 
 #if defined(ARCH_ARM) && defined(__aarch64__)
-    // Must be 4-byte aligned
+    /*  Must be 4-byte aligned */
     if ((max_len % 4) != 0) return false;
     
     size_t valid_count = 0;
     size_t invalid_count = 0;
-    const size_t max_invalid_ratio = max_len / 16;  // Stricter for ARM64
+    const size_t max_invalid_ratio = max_len / 16;  /*  Stricter for ARM64 */
     
     for (size_t offset = 0; offset + 4 <= max_len; offset += 4) {
         arm64_inst_t inst;
@@ -567,7 +567,7 @@ __attribute__((always_inline)) inline bool is_chunk_ok(const uint8_t *code, size
 
         offset += len;
     }
-    // allow max 2% invalid instructions
+    /*  allow max 2% invalid instructions */
     return valid_count > 0 && (invalid_count * 50 < valid_count);
 #endif
 }
@@ -575,8 +575,8 @@ __attribute__((always_inline)) inline bool is_chunk_ok(const uint8_t *code, size
 __attribute__((always_inline)) inline void forge_ghost_x86(uint8_t *buf, size_t *len, uint32_t value, chacha_state_t *rng) {
     if (!buf || !len || !rng) return;
     
-    // Use only volatile/scratch reg, avoid RSP(4) and RBP(5)
-    const uint8_t safe_regs[] = {0, 1, 2, 6, 7}; // RAX, RCX, RDX, RSI, RDI
+    /*  Use only volatile/scratch reg, avoid RSP(4) and RBP(5) */
+    const uint8_t safe_regs[] = {0, 1, 2, 6, 7}; /*  RAX, RCX, RDX, RSI, RDI */
     const size_t num_safe = sizeof(safe_regs) / sizeof(safe_regs[0]);
     
     uint8_t reg1 = safe_regs[chacha20_random(rng) % num_safe];
@@ -590,11 +590,11 @@ __attribute__((always_inline)) inline void forge_ghost_x86(uint8_t *buf, size_t 
 
     switch (chacha20_random(rng) % 12) {
         case 0: { /* XOR + TEST + JZ - always zero, always jumps */
-            buf[0] = 0x48; buf[1] = 0x31; buf[2] = 0xC0 | (reg1 << 3) | reg1; // xor reg1, reg1
-            buf[3] = 0x48; buf[4] = 0x85; buf[5] = 0xC0 | (reg1 << 3) | reg1; // test reg1, reg1
-            buf[6] = 0x0F; buf[7] = 0x84;                                      // jz (always taken)
-            write_rel32(buf + 8, 0); // Jump to next instruction (dead code)
-            // Dead code that will never execute
+            buf[0] = 0x48; buf[1] = 0x31; buf[2] = 0xC0 | (reg1 << 3) | reg1; /*  xor reg1, reg1 */
+            buf[3] = 0x48; buf[4] = 0x85; buf[5] = 0xC0 | (reg1 << 3) | reg1; /*  test reg1, reg1 */
+            buf[6] = 0x0F; buf[7] = 0x84;                                      /*  jz (always taken) */
+            write_rel32(buf + 8, 0); /*  Jump to next instruction (dead code) */
+            /*  Dead code that will never execute */
             buf[12] = 0x48; buf[13] = 0x83; buf[14] = 0xC0 | reg1; buf[15] = imm8;
             buf[16] = 0x48; buf[17] = 0x83; buf[18] = 0xE8 | reg1; buf[19] = imm8;
             *len = 20;
@@ -1049,7 +1049,7 @@ static bool sketch_flow_arm64(uint8_t *code, size_t size, flowmap *cfg) {
     for (size_t bi = 0; bi < cfg->num_blocks; bi++) {
         blocknode *block = &cfg->blocks[bi];
         
-        // Find last instruction in block
+        /*  Find last instruction in block */
         if (block->end <= block->start || block->end > size) continue;
         
         size_t last_insn_offset = block->end - 4;
@@ -1057,7 +1057,7 @@ static bool sketch_flow_arm64(uint8_t *code, size_t size, flowmap *cfg) {
         
         arm64_inst_t inst;
         if (!decode_arm64(code + last_insn_offset, &inst) || !inst.valid) {
-            // If we can't decode last instruction, assume fall-through
+            /*  If we can't decode last instruction, assume fall-through */
             if (bi + 1 < cfg->num_blocks && block->num_successors < 4) {
                 block->successors[block->num_successors++] = bi + 1;
             }
@@ -1163,18 +1163,18 @@ bool sketch_flow(uint8_t *code, size_t size, flowmap *cfg) {
             }
             
             int64_t target = -1;
-            if (inst.opcode[0] == 0xE9 || inst.opcode[0] == 0xE8) {  // JMP/CALL rel32
+            if (inst.opcode[0] == 0xE9 || inst.opcode[0] == 0xE8) {  /*  JMP/CALL rel32 */
                 target = offset + inst.len + (int32_t)inst.imm;
-            } else if (inst.opcode[0] == 0xEB) {  // JMP rel8
+            } else if (inst.opcode[0] == 0xEB) {  /*  JMP rel8 */
                 target = offset + inst.len + (int8_t)inst.imm;
-            } else if (inst.opcode[0] >= 0x70 && inst.opcode[0] <= 0x7F) {  // Jcc rel8
+            } else if (inst.opcode[0] >= 0x70 && inst.opcode[0] <= 0x7F) {  /*  Jcc rel8 */
                 target = offset + inst.len + (int8_t)inst.imm;
             } else if (inst.opcode[0] == 0x0F && inst.opcode_len > 1 &&
-                       inst.opcode[1] >= 0x80 && inst.opcode[1] <= 0x8F) {  // Jcc rel32
+                       inst.opcode[1] >= 0x80 && inst.opcode[1] <= 0x8F) {  /*  Jcc rel32 */
                 target = offset + inst.len + (int32_t)inst.imm;
             }
             
-            // Mark jump target as a leader
+            /*  Mark jump target as a leader */
             if (target >= 0 && target < (int64_t)size) {
                 leaders[target] = true;
             }
@@ -1283,7 +1283,7 @@ bool sketch_flow(uint8_t *code, size_t size, flowmap *cfg) {
                 target += (int32_t)last_inst.imm;
             }
             
-            // Add branch target
+            /*  Add branch target */
             if (target >= 0 && (size_t)target < size) {
                 for (size_t ti = 0; ti < cfg->num_blocks; ti++) {
                     if ((size_t)target >= cfg->blocks[ti].start && 
@@ -1296,25 +1296,25 @@ bool sketch_flow(uint8_t *code, size_t size, flowmap *cfg) {
                 }
             }
             
-            // Add fall-through
+            /*  Add fall-through */
             if (bi + 1 < cfg->num_blocks && block->num_successors < 4) {
                 block->successors[block->num_successors++] = bi + 1;
             }
         }
         else if (op == 0xE8) {
-            // CALL 
+            /*  CALL  */
             if (bi + 1 < cfg->num_blocks && block->num_successors < 4) {
                 block->successors[block->num_successors++] = bi + 1;
             }
         }
         else if (op == 0xFF && last_inst.has_modrm) {
-            // Indirect jump/call (FF /4 = JMP, FF /2 = CALL)
+            /*  Indirect jump/call (FF /4 = JMP, FF /2 = CALL) */
             uint8_t reg = modrm_reg(last_inst.modrm);
             if (reg == 4 || reg == 5) {
-                // Indirect JMP - mark as potential exit
+                /*  Indirect JMP - mark as potential exit */
                 block->is_exit = true;
             } else if (reg == 2 || reg == 3) {
-                // Assume it returns
+                /*  Assume it returns */
                 if (bi + 1 < cfg->num_blocks && block->num_successors < 4) {
                     block->successors[block->num_successors++] = bi + 1;
                 }
@@ -1335,7 +1335,7 @@ bool sketch_flow(uint8_t *code, size_t size, flowmap *cfg) {
     DBG("Built CFG with %zu blocks\n", cfg->num_blocks);
     return cfg->num_blocks > 0;
 #else
-    // Fallback for unknown architectures
+    /*  Fallback for unknown architectures */
     if (cfg) *cfg = (flowmap){0};
     return false;
 #endif
@@ -1363,7 +1363,7 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
     size_t max_blocks = cfg->num_blocks;
     
     if (max_blocks > 0 && max_blocks > (SIZE_MAX - 128 - size) / 8) {
-        return; // overflow
+        return; /*  overflow */
     }
     
     size_t buf_sz = size + 128 + max_blocks * 8;
@@ -1379,7 +1379,7 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
     for (size_t i = 0; i < max_blocks; i++) order[i] = i;
     
     for (size_t i = max_blocks - 1; i > 0; i--) {
-        size_t j = 1 + (chacha20_random(rng) % i); // keep block 0 pinned at index 0
+        size_t j = 1 + (chacha20_random(rng) % i); /*  keep block 0 pinned at index 0 */
         size_t t = order[i]; order[i] = order[j]; order[j] = t;
     }
     
@@ -1391,7 +1391,7 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
         size_t t = order[0]; order[0] = order[idx0]; order[idx0] = t;
     }
 
-    // Copy blocks and collect ALL control flow instructions for patching
+    /*  Copy blocks and collect ALL control flow instructions for patching */
     for (size_t i = 0; i < max_blocks; i++) {
         size_t bi = order[i];
         blocknode *b = &cfg->blocks[bi];
@@ -1400,7 +1400,7 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
         
         memcpy(nbuf + out, code + b->start, blen);
 
-        // Scan entire block for control flow instructions 
+        /*  Scan entire block for control flow instructions  */
         size_t block_offset = 0;
         while (block_offset < blen && np < (sizeof(patch)/sizeof(patch[0]))) {
             x86_inst_t inst;
@@ -1415,28 +1415,28 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
             bool should_patch = false;
             int patch_type = 0;
 
-            if (inst.opcode[0] == 0xE8) {  // CALL rel32
+            if (inst.opcode[0] == 0xE8) {  /*  CALL rel32 */
                 current_absolute_target = instruction_addr_in_new_buffer + inst.len + (int32_t)inst.imm;
                 should_patch = true;
                 patch_type = 2;
             } 
-            else if (inst.opcode[0] == 0xE9) {  // JMP rel32
+            else if (inst.opcode[0] == 0xE9) {  /*  JMP rel32 */
                 current_absolute_target = instruction_addr_in_new_buffer + inst.len + (int32_t)inst.imm;
                 should_patch = true;
                 patch_type = 1;
             }
-            else if (inst.opcode[0] == 0xEB) {  // JMP rel8
+            else if (inst.opcode[0] == 0xEB) {  /*  JMP rel8 */
                 current_absolute_target = instruction_addr_in_new_buffer + inst.len + (int8_t)inst.imm;
                 should_patch = true;
                 patch_type = 5;
             }
-            else if (inst.opcode[0] >= 0x70 && inst.opcode[0] <= 0x7F) {  // Jcc rel8
+            else if (inst.opcode[0] >= 0x70 && inst.opcode[0] <= 0x7F) {  /*  Jcc rel8 */
                 current_absolute_target = instruction_addr_in_new_buffer + inst.len + (int8_t)inst.imm;
                 should_patch = true;
                 patch_type = 3;
             } 
             else if (inst.opcode[0] == 0x0F && inst.opcode_len > 1 && 
-                     inst.opcode[1] >= 0x80 && inst.opcode[1] <= 0x8F) {  // Jcc rel32
+                     inst.opcode[1] >= 0x80 && inst.opcode[1] <= 0x8F) {  /*  Jcc rel32 */
                 current_absolute_target = instruction_addr_in_new_buffer + inst.len + (int32_t)inst.imm;
                 should_patch = true;
                 patch_type = 4;
@@ -1477,8 +1477,8 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
         int32_t new_disp = 0;
 
         switch (p->typ) {
-            case 1: // JMP rel32 (opcode E9)
-            case 2: // CALL rel32 (opcode E8)
+            case 1: /*  JMP rel32 (opcode E9) */
+            case 2: /*  CALL rel32 (opcode E8) */
                 if (src + 5 > buf_sz) continue;
                 new_disp = (int32_t)(new_tgt - (src + 5));
                 if (src + 1 + sizeof(int32_t) <= buf_sz) {
@@ -1486,29 +1486,29 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
                 }
                 break;
                 
-            case 3: // Jcc rel8 (opcode 70-7F)
+            case 3: /*  Jcc rel8 (opcode 70-7F) */
                 if (src + 2 > buf_sz) continue;
                 new_disp = (int32_t)(new_tgt - (src + 2));
                 
                 if (new_disp >= -128 && new_disp <= 127 && src + 1 < buf_sz) {
                     nbuf[src + 1] = (uint8_t)new_disp;
                 } else {
-                    // Distance too far for rel8, expand to Jcc rel32 (0F 8x)
+                    /*  Distance too far for rel8, expand to Jcc rel32 (0F 8x) */
                     if (src + 6 <= buf_sz) {
-                        uint8_t cc = nbuf[src] & 0x0F;  // Extract condition code
+                        uint8_t cc = nbuf[src] & 0x0F;  /*  Extract condition code */
                         
-                        // Shift instruction forward to make room
+                        /*  Shift instruction forward to make room */
                         memmove(nbuf + src + 6, nbuf + src + 2, buf_sz - src - 6);
                         
-                        nbuf[src] = 0x0F;               // Two-byte opcode prefix
-                        nbuf[src + 1] = 0x80 | cc;      // Jcc rel32
+                        nbuf[src] = 0x0F;               /*  Two-byte opcode prefix */
+                        nbuf[src + 1] = 0x80 | cc;      /*  Jcc rel32 */
                         new_disp = (int32_t)(new_tgt - (src + 6));
                         memcpy(nbuf + src + 2, &new_disp, 4);
                         
-                        p->inst_len = 6;  // Update length
-                        out += 4;  // Account for expansion
+                        p->inst_len = 6;  /*  Update length */
+                        out += 4;  /*  Account for expansion */
                     } else {
-                        // Can't expand, rollback
+                        /*  Can't expand, rollback */
                         if (src < size && p->inst_len > 0 && src + p->inst_len <= size) {
                             memcpy(nbuf + src, code + cfg->blocks[p->blki].start + (src - bmap[p->blki]), p->inst_len);
                         }
@@ -1516,7 +1516,7 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
                 }
                 break;
                 
-            case 4: // Jcc rel32 (opcode 0F 80-8F)
+            case 4: /*  Jcc rel32 (opcode 0F 80-8F) */
                 if (src + 6 > buf_sz) continue;
                 new_disp = (int32_t)(new_tgt - (src + 6));
                 if (src + 2 + sizeof(int32_t) <= buf_sz) {
@@ -1524,26 +1524,26 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
                 }
                 break;
                 
-            case 5: // JMP rel8 (opcode EB)
+            case 5: /*  JMP rel8 (opcode EB) */
                 if (src + 2 > buf_sz) continue;
                 new_disp = (int32_t)(new_tgt - (src + 2));
                 
                 if (new_disp >= -128 && new_disp <= 127 && src + 1 < buf_sz) {
                     nbuf[src + 1] = (uint8_t)new_disp;
                 } else {
-                    // Distance too far for rel8, expand to JMP rel32 (E9)
+                    /*  Distance too far for rel8, expand to JMP rel32 (E9) */
                     if (src + 5 <= buf_sz) {
-                        // Shift instruction forward to make room
+                        /*  Shift instruction forward to make room */
                         memmove(nbuf + src + 5, nbuf + src + 2, buf_sz - src - 5);
                         
-                        nbuf[src] = 0xE9;  // JMP rel32
+                        nbuf[src] = 0xE9;  /*  JMP rel32 */
                         new_disp = (int32_t)(new_tgt - (src + 5));
                         memcpy(nbuf + src + 1, &new_disp, 4);
                         
-                        p->inst_len = 5;  // Update length
-                        out += 3;  // Account for expansion
+                        p->inst_len = 5;  /*  Update length */
+                        out += 3;  /*  Account for expansion */
                     } else {
-                        // Can't expand, rollback
+                        /*  Can't expand, rollback */
                         if (src < size && p->inst_len > 0 && src + p->inst_len <= size) {
                             memcpy(nbuf + src, code + cfg->blocks[p->blki].start + (src - bmap[p->blki]), p->inst_len);
                         }
@@ -1552,12 +1552,12 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
                 break;
         }
 
-        // Validate the patched instruction
+        /*  Validate the patched instruction */
         if (src < buf_sz) {
             size_t remaining = buf_sz - src;
             x86_inst_t test_inst;
             if (!decode_x86_withme(nbuf + src, remaining > 16 ? 16 : remaining, 0, &test_inst, NULL) || !test_inst.valid) {
-                // Rollback by restoring original bytes
+                /*  Rollback by restoring original bytes */
                 if (src < size && p->inst_len > 0 && src + p->inst_len <= size) {
                     memcpy(nbuf + src, code + cfg->blocks[p->blki].start + (src - bmap[p->blki]), p->inst_len);
                 }
@@ -1565,7 +1565,7 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
         }
     }
 
-    // Decode all patched instructions
+    /*  Decode all patched instructions */
     bool all_valid = true;
     for (size_t i = 0; i < np; i++) {
         patch_t *p = &patch[i];
@@ -1583,7 +1583,7 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
         }
     }
 
-    // Only apply changes if all patches are valid
+    /*  Only apply changes if all patches are valid */
     if (all_valid && out <= size) {
         memcpy(code, nbuf, out);
         if (out < size) memset(code + out, 0, size - out);
@@ -1831,11 +1831,11 @@ void shuffle_blocks(uint8_t *code, size_t size, void *rng) {
                 }
                 else if (typ==4) { rel=(int32_t)(tgt-(inst_off+inst.len)); memcpy(nbuf+inst_off+2,&rel,4); }
             } else {
-                // Jump target is outside our blocks 
+                /*  Jump target is outside our blocks  */
                 bool is_call=(typ==2);
                 size_t tramp_start = tramp_off;
                 emit_trampoline(nbuf,&tramp_off,(uint64_t)oldtgt,is_call);
-                //  48 B8 (imm64) FF E0/D0
+                /*   48 B8 (imm64) FF E0/D0 */
                 size_t tramp_loc = tramp_start;
                 
                 int32_t rel=(int32_t)(tramp_loc-(inst_off+ (typ==2||typ==1?5:2)));
@@ -1844,7 +1844,7 @@ void shuffle_blocks(uint8_t *code, size_t size, void *rng) {
                     memcpy(nbuf+inst_off+1,&rel,4); 
                 }
                 else if (typ==3) { 
-                    // Expand Jcc rel8 to Jcc rel32
+                    /*  Expand Jcc rel8 to Jcc rel32 */
                     uint8_t cc=nbuf[inst_off]&0x0F; 
                     nbuf[inst_off]=0x0F; 
                     nbuf[inst_off+1]=0x80|cc; 
@@ -1856,7 +1856,7 @@ void shuffle_blocks(uint8_t *code, size_t size, void *rng) {
                     memcpy(nbuf+inst_off+2,&rel,4); 
                 }
                 else if (typ==5) { 
-                    // Expand JMP rel8 to JMP rel32
+                    /*  Expand JMP rel8 to JMP rel32 */
                     nbuf[inst_off]=0xE9; 
                     rel=(int32_t)(tramp_loc-(inst_off+5)); 
                     memcpy(nbuf+inst_off+1,&rel,4); 
@@ -1874,15 +1874,15 @@ void shuffle_blocks(uint8_t *code, size_t size, void *rng) {
 
     free(order); free(new_off); free(nbuf); free(cfg.blocks);
 #else
-    (void)code; (void)size; (void)rng; // no idea 
+    (void)code; (void)size; (void)rng; /*  no idea  */
 #endif
 }
 
 static inline bool is_control_flow(const x86_inst_t *i) { 
     if (!i) return false;
     uint8_t op = i->opcode[0];
-    if (op == 0xE8 || op == 0xE9 || op == 0xEB) return true; // call/jmp/shortjmp
-    if (op == 0xC3 || op == 0xCB || op == 0xC2 || op == 0xCA) return true; // ret
+    if (op == 0xE8 || op == 0xE9 || op == 0xEB) return true; /*  call/jmp/shortjmp */
+    if (op == 0xC3 || op == 0xCB || op == 0xC2 || op == 0xCA) return true; /*  ret */
     if (op == 0xE0 || op == 0xE1 || op == 0xE2 || op == 0xE3) return true;
     if (op == 0xFF) return true;
     return false;
@@ -1898,11 +1898,11 @@ static inline uint16_t inst_reg_mask(const x86_inst_t *i) {
         m |= (1u << r) | (1u << rm);
     }
     uint8_t op = i->opcode[0];
-    if ((op & 0xF8) == 0xB8) { // mov reg, imm -> writes reg
+    if ((op & 0xF8) == 0xB8) { /*  mov reg, imm -> writes reg */
         uint8_t reg = op & 0x7;
         m |= (1u << reg);
     }
-    if ((op & 0xF8) == 0x50) { // push/pop family touches reg (and rsp)
+    if ((op & 0xF8) == 0x50) { /*  push/pop family touches reg (and rsp) */
         uint8_t reg = op & 0x7;
         m |= (1u << reg);
     }
@@ -1920,29 +1920,29 @@ static inline uint16_t inst_reg_mask(const x86_inst_t *i) {
 static inline bool has_memory_access(const x86_inst_t *i) {
     if (!i || !i->has_modrm) return false;
     uint8_t mod = (i->modrm >> 6) & 3;
-    return mod != 3;  // mod != 11 means memory operand
+    return mod != 3;  /*  mod != 11 means memory operand */
 }
 
 static inline bool independent_inst(const x86_inst_t *a, const x86_inst_t *b) {
     if (!a || !b) return false;
     if (is_control_flow(a) || is_control_flow(b)) return false;
     
-    // Check register dependencies
+    /*  Check register dependencies */
     uint16_t ma = inst_reg_mask(a);
     uint16_t mb = inst_reg_mask(b);
     if (ma & mb) return false;
     
-    // if both access memory, assume dependent
+    /*  if both access memory, assume dependent */
     if (has_memory_access(a) && has_memory_access(b)) return false;
     
-    // If one writes memory and other reads/writes memory, assume dependent
+    /*  If one writes memory and other reads/writes memory, assume dependent */
     if (has_memory_access(a) || has_memory_access(b)) {
-        // Check if either is a store (MOV to memory, ...)
+        /*  Check if either is a store (MOV to memory, ...) */
         uint8_t op_a = a->opcode[0];
         uint8_t op_b = b->opcode[0];
-        if ((op_a == 0x89 || op_a == 0x88 || op_a == 0xC7) ||  // Stores
+        if ((op_a == 0x89 || op_a == 0x88 || op_a == 0xC7) ||  /*  Stores */
             (op_b == 0x89 || op_b == 0x88 || op_b == 0xC7)) {
-            return false;  // Assume 
+            return false;  /*  Assume  */
         }
     }
     
@@ -1954,13 +1954,13 @@ static inline bool swap_adjacent_ranges(uint8_t *code, size_t size, size_t a_off
     uint8_t *tmp = (uint8_t*)malloc(a_len);
     if (!tmp) return false;
     memcpy(tmp, code + a_off, a_len);
-    memmove(code + a_off, code + a_off + a_len, b_len); // move B forward into A's crib
+    memmove(code + a_off, code + a_off + a_len, b_len); /*  move B forward into A's crib */
     memcpy(code + a_off + b_len, tmp, a_len);
     free(tmp);
     return true;
 }
 
-static int build_instr_win(uint8_t *code, size_t size, size_t offset,  // long ass name 
+static int build_instr_win(uint8_t *code, size_t size, size_t offset,  /*  long ass name  */
                                    x86_inst_t *win, size_t *win_offs, int max_window) {
     if (!code || !win || !win_offs) return 0;
     
@@ -2095,13 +2095,13 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
         
         /* MOV equivalents */
         if (!mutated && inst.type == ARM_OP_MOV && (chacha20_random(rng) % 100) < (mutation_intensity * 8)) {
-            // MOV Xd, Xm > ORR Xd, XZR, Xm
+            /*  MOV Xd, Xm > ORR Xd, XZR, Xm */
             if (inst.rd < 29 && inst.rm < 29) {
-                uint32_t new_insn = 0xAA0003E0;  // ORR base encoding
+                uint32_t new_insn = 0xAA0003E0;  /*  ORR base encoding */
                 new_insn |= (inst.is_64bit ? (1u << 31) : 0);
                 new_insn |= (inst.rd & 0x1F);
                 new_insn |= ((inst.rm & 0x1F) << 16);
-                new_insn |= (31 << 5);  // Rn = XZR
+                new_insn |= (31 << 5);  /*  Rn = XZR */
                 
                 *(uint32_t*)(code + offset) = new_insn;
                 mutated = true;
@@ -2110,12 +2110,12 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
             }
         }
         
-        // Zero Reg 
+        /*  Zero Reg  */
         if (!mutated && inst.type == ARM_OP_MOV && inst.imm == 0 && 
             (chacha20_random(rng) % 100) < (mutation_intensity * 8)) {
             
             switch (chacha20_random(rng) % 4) {
-                case 0: {  // MOV Xd, #0 > EOR Xd, Xd, Xd
+                case 0: {  /*  MOV Xd, #0 > EOR Xd, Xd, Xd */
                     uint32_t new_insn = 0xCA000000;
                     new_insn |= (inst.is_64bit ? (1u << 31) : 0);
                     new_insn |= (inst.rd & 0x1F);
@@ -2125,7 +2125,7 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                     mutated = true;
                     break;
                 }
-                case 1: {  // MOV Xd, #0 > SUB Xd, Xd, Xd
+                case 1: {  /*  MOV Xd, #0 > SUB Xd, Xd, Xd */
                     uint32_t new_insn = 0xCB000000;
                     new_insn |= (inst.is_64bit ? (1u << 31) : 0);
                     new_insn |= (inst.rd & 0x1F);
@@ -2135,7 +2135,7 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                     mutated = true;
                     break;
                 }
-                case 2: {  // MOV Xd, #0 > AND Xd, Xd, #0
+                case 2: {  /*  MOV Xd, #0 > AND Xd, Xd, #0 */
                     uint32_t new_insn = 0x92400000;
                     new_insn |= (inst.is_64bit ? (1u << 31) : 0);
                     new_insn |= (inst.rd & 0x1F);
@@ -2144,7 +2144,7 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                     mutated = true;
                     break;
                 }
-                case 3: {  // MOV Xd, #0 > MOVZ Xd, #0
+                case 3: {  /*  MOV Xd, #0 > MOVZ Xd, #0 */
                     uint32_t new_insn = 0xD2800000;
                     new_insn |= (inst.is_64bit ? (1u << 31) : 0);
                     new_insn |= (inst.rd & 0x1F);
@@ -2160,17 +2160,17 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
             }
         }
         
-        // ADD/SUB Equivalents
+        /*  ADD/SUB Equivalents */
         if (!mutated && (inst.type == ARM_OP_ADD || inst.type == ARM_OP_SUB) && 
             inst.imm == 0 && (chacha20_random(rng) % 100) < (mutation_intensity * 6)) {
             
-            // ADD Xd, Xn, #0 > MOV Xd, Xn (ORR Xd, XZR, Xn)
+            /*  ADD Xd, Xn, #0 > MOV Xd, Xn (ORR Xd, XZR, Xn) */
             if (inst.type == ARM_OP_ADD && inst.rd < 29 && inst.rn < 29) {
                 uint32_t new_insn = 0xAA0003E0;
                 new_insn |= (inst.is_64bit ? (1u << 31) : 0);
                 new_insn |= (inst.rd & 0x1F);
                 new_insn |= ((inst.rn & 0x1F) << 16);
-                new_insn |= (31 << 5);  // Rn = XZR
+                new_insn |= (31 << 5);  /*  Rn = XZR */
                 *(uint32_t*)(code + offset) = new_insn;
                 mutated = true;
                 changes++;
@@ -2178,16 +2178,16 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
             }
         }
         
-        // CMP/CMN Equi
+        /*  CMP/CMN Equi */
         if (!mutated && inst.type == ARM_OP_CMP && inst.imm == 0 &&
             (chacha20_random(rng) % 100) < (mutation_intensity * 5)) {
             
-            // CMP Xn, #0 > SUBS XZR, Xn, #0
-            // Already in, we can swap to CMN tho!
-            // CMP Xn, #0 ≡ CMN Xn, #0 (for zero)
-            uint32_t new_insn = 0xB1000000;  // CMN (adds) base
+            /*  CMP Xn, #0 > SUBS XZR, Xn, #0 */
+            /*  Already in, we can swap to CMN tho! */
+            /*  CMP Xn, #0 ≡ CMN Xn, #0 (for zero) */
+            uint32_t new_insn = 0xB1000000;  /*  CMN (adds) base */
             new_insn |= (inst.is_64bit ? (1u << 31) : 0);
-            new_insn |= (31);  // Rd = XZR
+            new_insn |= (31);  /*  Rd = XZR */
             new_insn |= ((inst.rn & 0x1F) << 5);
             *(uint32_t*)(code + offset) = new_insn;
             mutated = true;
@@ -2195,24 +2195,24 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
             if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "cmp->cmn");
         }
         
-        // NOP Insertion (if space allows)
+        /*  NOP Insertion (if space allows) */
         if (!mutated && (chacha20_random(rng) % 100) < (mutation_intensity * 3)) {
-            // Insert NOP before current instruction 
-            // For now, replace current instruction with NOP if it's cool
+            /*  Insert NOP before current instruction  */
+            /*  For now, replace current instruction with NOP if it's cool */
             if (inst.type == ARM_OP_NOP || 
                 (inst.type == ARM_OP_MOV && inst.rd == inst.rm)) {
-                *(uint32_t*)(code + offset) = 0xD503201F;  // NOP
+                *(uint32_t*)(code + offset) = 0xD503201F;  /*  NOP */
                 mutated = true;
                 changes++;
                 if (log) drop_mut(log, offset, 4, MUT_JUNK, gen, "nop");
             }
         }
         
-        // Validate mutation
+        /*  Validate mutation */
         if (mutated) {
             arm64_inst_t verify;
             if (!decode_arm64(code + offset, &verify) || !verify.valid || verify.ring0) {
-                // Rollback
+                /*  Rollback */
                 *(uint32_t*)(code + offset) = backup;
                 changes--;
             }
@@ -2231,17 +2231,17 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
 
     if (liveness) boot_live(liveness);
 
-    // Apply mutation chains early in the pipeline (gen 5+)
+    /*  Apply mutation chains early in the pipeline (gen 5+) */
     if (gen >= 5 && (chacha20_random(rng) % 10) < (gen > 10 ? 6 : 3)) {
         unsigned chain_depth = 1 + (gen / 10);  
-        if (chain_depth > 3) chain_depth = 3;   // Ka-Boom
+        if (chain_depth > 3) chain_depth = 3;   /*  Ka-Boom */
         
         size_t new_size = expand_with_chains(code, size, size * 2, liveness, rng, 
                                              chain_depth, mutation_intensity * 2);
         if (new_size > size && new_size <= size * 2) {
             if (log) drop_mut(log, 0, new_size, MUT_EXPAND, gen, "chain expand");
-            // Note: size parameter is const, so we can't update it here
-            // when called needs to handle size changes
+            /*  Note: size parameter is const, so we can't update it here */
+            /*  when called needs to handle size changes */
         }
     }
 
@@ -2466,7 +2466,7 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
         }
 
         if (!mutated && (chacha20_random(rng) % 10) < mutation_intensity) {
-            bool cool_to_insert = true; // PAUSE!!
+            bool cool_to_insert = true; /*  PAUSE!! */
             if (liveness) {
                 const uint8_t opaque_regs[] = {0, 1, 2, 6, 7};
                 for (size_t i = 0; i < sizeof(opaque_regs); i++) {
@@ -2520,7 +2520,7 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
         /* Instruction splitting expand MOV reg,imm into equivalent sequences */
         if (!mutated && (inst.opcode[0] & 0xF8) == 0xB8 && inst.imm != 0 && inst.len >= 5) {
             uint8_t target_reg = inst.opcode[0] & 0x7;
-            switch(chacha20_random(rng) % 30) { // Momma didn't raise no pussy
+            switch(chacha20_random(rng) % 30) { /*  Momma didn't raise no pussy */
                 case 0: 
                     if (offset + 10 <= size) {
                         code[offset] = 0x48; 
@@ -2569,10 +2569,10 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                         code[offset+2] = 0xC0 | target_reg;
                         *(uint32_t*)(code + offset + 3) = (uint32_t)inst.imm - 1;
                         code[offset+7] = 0x48; code[offset+8] = 0xFF;
-                        code[offset+9] = 0xC0 | target_reg;  // INC
+                        code[offset+9] = 0xC0 | target_reg;  /*  INC */
                     }
                     break;
-                case 6: // XOR reg,reg + XOR reg,imm (double XOR = value)
+                case 6: /*  XOR reg,reg + XOR reg,imm (double XOR = value) */
                     if (offset + 14 <= size) {
                         code[offset] = 0x48; code[offset+1] = 0x31;
                         code[offset+2] = 0xC0 | (target_reg << 3) | target_reg;
@@ -2584,25 +2584,25 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                         *(uint32_t*)(code + offset + 13) = 0xAAAAAAAA;
                     }
                     break;
-                case 7: // MOV reg, imm*2 + SHR reg, 1
-                    if (offset + 10 <= size && (inst.imm & 1) == 0) {  // Only if even
+                case 7: /*  MOV reg, imm*2 + SHR reg, 1 */
+                    if (offset + 10 <= size && (inst.imm & 1) == 0) {  /*  Only if even */
                         code[offset] = 0x48; code[offset+1] = 0xC7;
                         code[offset+2] = 0xC0 | target_reg;
                         *(uint32_t*)(code + offset + 3) = (uint32_t)inst.imm * 2;
                         code[offset+7] = 0x48; code[offset+8] = 0xD1;
-                        code[offset+9] = 0xE8 | target_reg; // SHR 1
+                        code[offset+9] = 0xE8 | target_reg; /*  SHR 1 */
                     }
                     break;
-                case 8: // MOV reg, -imm + NEG reg (double NEG)
+                case 8: /*  MOV reg, -imm + NEG reg (double NEG) */
                     if (offset + 10 <= size && inst.imm != 0x80000000) {
                         code[offset] = 0x48; code[offset+1] = 0xC7;
                         code[offset+2] = 0xC0 | target_reg;
                         *(uint32_t*)(code + offset + 3) = -(int32_t)inst.imm;
                         code[offset+7] = 0x48; code[offset+8] = 0xF7;
-                        code[offset+9] = 0xD8 | target_reg; // NEG
+                        code[offset+9] = 0xD8 | target_reg; /*  NEG */
                     }
                     break;
-                case 9: // MOV reg, part1 + ADD reg, part2
+                case 9: /*  MOV reg, part1 + ADD reg, part2 */
                     if (offset + 14 <= size) {
                         uint32_t part1 = (uint32_t)inst.imm / 3;
                         uint32_t part2 = (uint32_t)inst.imm - part1;
@@ -2704,7 +2704,7 @@ __attribute__((always_inline)) inline __attribute__((always_inline)) inline void
     }
 
 #elif defined(__aarch64__) || defined(_M_ARM64)
-    // Apply batch expansion first (gen 5+)
+    /*  Apply batch expansion first (gen 5+) */
     if (gen >= 5 && (chacha20_random(rng) % 10) < (gen > 10 ? 6 : 3)) {
         size_t new_size = expand_arm64_code_section(code, size, size * 2, &liveness, rng,
                                                      mutation_intensity * 2);
@@ -2726,13 +2726,13 @@ __attribute__((always_inline)) inline __attribute__((always_inline)) inline void
         
         if (liveness) pulse_live(&liveness, offset, &inst);
         
-        // Apply ARM64 mutations
+        /*  Apply ARM64 mutations */
         scramble_arm64(code + offset, 4, rng, gen, &mut_log, &liveness, mutation_intensity);
         
         offset += 4;
     }
 
-    // Control flow mutations
+    /*  Control flow mutations */
     if (gen > 5 && (chacha20_random(rng) % 10) < (gen > 15 ? 8 : 3)) {
         flowmap cfg;
         if (sketch_flow_arm64(code, size, &cfg)) {
@@ -2742,13 +2742,13 @@ __attribute__((always_inline)) inline __attribute__((always_inline)) inline void
         }
     }
     
-    // Block reordering
+    /*  Block reordering */
     if (gen > 3 && (chacha20_random(rng) % 10) < (gen > 10 ? 5 : 2)) {
         shuffle_blocks_arm64(code, size, rng);
         drop_mut(&mut_log, 0, size, MUT_REORDER, gen, "arm64 block reorder");
     }
 #else
-    // Do nothing
+    /*  Do nothing */
     (void)code; (void)size; (void)rng; (void)gen;
 #endif
 
@@ -2776,14 +2776,14 @@ void mutate(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, engin
 static bool validate_mutated_code(const uint8_t *code, size_t size, size_t original_size) {
     if (!code || size == 0) return false;
     
-    // Check size growth (max 3x original)
+    /*  Check size growth (max 3x original) */
     if (size > original_size * 3) {
         DBG("size %zu exceeds 3x original %zu\n", size, original_size);
         return false;
     }
     
 #if defined(ARCH_ARM)
-    // Must be 4-byte aligned
+    /*  Must be 4-byte aligned */
     if ((size % 4) != 0) {
         DBG("ARM64 size %zu not 4-byte aligned\n", size);
         return false;
@@ -2819,7 +2819,7 @@ static bool validate_mutated_code(const uint8_t *code, size_t size, size_t origi
     DBG("%zu valid ARM64 instructions\n", valid_count);
     return true;
     
-#else  // x86-64
+#else  /*  x86-64 */
     size_t valid_count = 0;
     size_t offset = 0;
     
