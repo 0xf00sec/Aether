@@ -98,7 +98,12 @@ bool Ampbuff(context_t *ctx, size_t needed_size) {
     size_t new_capacity = ctx->buffcap ? ctx->buffcap : 64;
     while (new_capacity < needed_size) {
         if (new_capacity > SIZE_MAX / 2) {
-            new_capacity = SIZE_MAX;
+            /* Can't double, try to allocate exactly what's needed */
+            if (needed_size <= SIZE_MAX) {
+                new_capacity = needed_size;
+            } else {
+                return false;
+            }
             break;
         }
         new_capacity = new_capacity * 2;
@@ -605,7 +610,10 @@ static bool apply_jnk(context_t *ctx, unsigned intensity, size_t max_size) {
         spew_trash(junk_buf, &junk_len, &ctx->rng);
 
         if (offset + instrs[i].len + junk_len > cave_end) continue;
-        if (!Ampbuff(ctx, ctx->codesz + junk_len)) break;
+        if (!Ampbuff(ctx, ctx->codesz + junk_len)) {
+            free(instrs);
+            return changes > 0;
+        }
 
         size_t insert_point = offset + instrs[i].len;
         memmove(ctx->working_code + insert_point + junk_len,
