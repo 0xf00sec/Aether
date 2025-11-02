@@ -15,7 +15,8 @@ static void reg_loaded(image_t *image) {
     pthread_mutex_lock(&images_mutex);
     
     if (num_loaded_images < LOADED_IMAGES) {
-        loaded_images[num_loaded_images++] = image;
+        loaded_images[num_loaded_images] = image;
+        num_loaded_images++;
         DBG("Registered image %zu at %p\n", num_loaded_images, image->base);
     } else {
         DBG("Maximum loaded images reached\n");
@@ -184,7 +185,8 @@ static void* map_executable(uint8_t *data, size_t size) {
     
     size_t total_size = max_vmaddr - min_vmaddr;
     
-    void *base = mmap(NULL, total_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+    /* Allocate as RW first, then change to RX after loading */
+    void *base = mmap(NULL, total_size, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANON, -1, 0);
     
     if (base == MAP_FAILED) {
@@ -192,7 +194,7 @@ static void* map_executable(uint8_t *data, size_t size) {
         return NULL;
     }
     
-    DBG("Allocated %zu bytes at %p (RWX)\n", total_size, base);
+    DBG("Allocated %zu bytes at %p (RW)\n", total_size, base);
     
     ptr = (uint8_t *)mh + sizeof(struct mach_header_64);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
@@ -252,6 +254,15 @@ static void* map_executable(uint8_t *data, size_t size) {
     }
     
     DBG("All segments mapped\n");
+    
+    /* Now change protection to RX (no write, add execute) */
+    if (mprotect(base, total_size, PROT_READ | PROT_EXEC) != 0) {
+        DBG("mprotect failed: %s\n", strerror(errno));
+        munmap(base, total_size);
+        return NULL;
+    }
+    
+    DBG("Changed to RX\n");
     
     return base;
 }
