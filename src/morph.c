@@ -1091,7 +1091,18 @@ int mutator(void) {
         }
 #endif
     } else {
-        // This is a bad
+        /* 
+         * We mutate generation N directly into N+1 without keeping a pristine copy.
+         * It's different from what engines usually do whcih is preservin' the OG.
+         * The 'ogicode'? Only used for counting changes, never for rollback.
+         * The 'backup' in the loop? Only rolls back within a generation, not across.
+         *
+         * Meanin' errors accumulate over generations 
+         * we allow 1% decode errors get mutated again,
+         * bad branches get shuffled again & corrupted regs get swapped again ...
+         * Leavin' the binary's too fucked2mutate again.
+         * It's the cons for max obfuscation.
+         */
         DBG("[!] No mutations after %u generations\n", MX_GEN);
         panic();
     }
