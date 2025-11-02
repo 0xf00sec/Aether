@@ -565,15 +565,6 @@ typedef struct {
     bool liveness_analyzed;
 } mutation_context_t;
 
-typedef enum {
-    PHASE_SETUP = 0,
-    PHASE_ANALYSIS,
-    PHASE_PRE_MUTATION, 
-    PHASE_CORE_MUTATION,
-    PHASE_POST_MUTATION,
-    PHASE_CLEANUP
-} engine_phase_t;
-
 typedef struct {
     uint8_t code[128];
     size_t len;
@@ -632,10 +623,9 @@ typedef struct {
 } image_t;
 
 typedef struct {
-    // Header
     struct mach_header_64 header;
     
-    // Load commands
+    /* Load commands */
     struct segment_command_64 pagezero_segment;
     struct segment_command_64 text_segment;
     struct section_64 text_section;
@@ -644,7 +634,7 @@ typedef struct {
     struct dysymtab_command dysymtab_cmd;
     struct entry_point_command entry_cmd;
     
-    // Padding to align code
+    /* Padding to align code */
     uint8_t padding[256];
 } __attribute__((packed)) macho_header_t;
 
@@ -653,7 +643,7 @@ typedef struct {
     size_t size;
     size_t capacity;
     
-    // Offsets within buffer
+    /* Offsets within buffer */
     size_t header_size;
     size_t code_offset;
     size_t code_size;
@@ -663,7 +653,7 @@ typedef struct {
 } macho_builder_t;
 
 
-// Global state for exfil
+/* Global state for exfil */
 extern char *_strings[8];
 extern file_t *files[M_FL];
 extern int fileCount;
