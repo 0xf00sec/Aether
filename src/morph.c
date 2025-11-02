@@ -3,9 +3,7 @@
 static size_t g_marker_offset = NOFFSET__;
 static void clear_tx(context_t *ctx);
 static bool clear_mut(context_t *ctx);
-
 static bool reg_mut(context_t *ctx, unsigned intensity);
-static bool jnk_fill(context_t *ctx, unsigned intensity);
 
 static bool dsk_seg(context_t *ctx, size_t original_size);
 static bool dsk_mut(context_t *ctx, const char *binary_path, uint64_t file_start, size_t original_size);
@@ -272,16 +270,34 @@ bool tx_Init(context_t *ctx, const uint8_t *code, size_t size,
     crit_tap(hdr, text_vm_start, ctx->ranges, &ctx->numcheck, ctx->codesz);
 
     uint8_t seed[32];
+    memset(seed, 0, sizeof(seed));
+    
     uint64_t t = mach_absolute_time();
     pid_t pid = getpid();
     uuid_t uid;
     uuid_generate(uid);
-
-    memcpy(seed, &t, sizeof(t));
-    memcpy(seed + sizeof(t), &pid, sizeof(pid));
-    memcpy(seed + sizeof(t) + sizeof(pid), uid, sizeof(uid));
+    
+    int urandom_fd = open("/dev/urandom", O_RDONLY);
+    if (urandom_fd >= 0) {
+        read(urandom_fd, seed, sizeof(seed));
+        close(urandom_fd);
+    }
+    
+    /* Avoid overwriting good entropy */
+    for (size_t i = 0; i < sizeof(t) && i < sizeof(seed); i++) {
+        seed[i] ^= ((uint8_t*)&t)[i];
+    }
+    for (size_t i = 0; i < sizeof(pid) && (i + sizeof(t)) < sizeof(seed); i++) {
+        seed[i + sizeof(t)] ^= ((uint8_t*)&pid)[i];
+    }
+    for (size_t i = 0; i < sizeof(uid) && (i + sizeof(t) + sizeof(pid)) < sizeof(seed); i++) {
+        seed[i + sizeof(t) + sizeof(pid)] ^= uid[i];
+    }
     
     chacha20_init(&ctx->rng, seed, sizeof(seed));
+    
+    /* Clear seed from stack */
+    memset(seed, 0, sizeof(seed));
 
     if (!init_mut(&ctx->muttation)) {
         clear_tx(ctx); 
@@ -372,7 +388,7 @@ static bool clear_mut(context_t *ctx) {
 
 /* Register swapping + block shuffling */
 static bool reg_mut(context_t *ctx, unsigned intensity) { 
-    if (!ctx || !ctx->working_code || ctx->codesz == 0 || ctx->is_shellcode) return true;
+    if (!ctx || !ctx->working_code || ctx->codesz == 0) return true;
 
     liveness_state_t liveness;
     boot_live(&liveness);
@@ -492,246 +508,6 @@ static bool reg_mut(context_t *ctx, unsigned intensity) {
     return (changes > 0) || block_changed || intensity == 0;
 }
 
-/* Find code caves sequences of 0x00/0x90/0xCC padding */
-static bool cave_it(context_t *ctx, uint64_t *caves, int *num_caves) {
-    if (!ctx || !caves || !num_caves || ctx->codesz == 0) return false;
-    
-    *num_caves = 0;
-    
-    instr_info_t *instrs = malloc(8192 * sizeof(instr_info_t));
-    if (!instrs) return false;
-    
-    size_t ninstr = decode_map(ctx->working_code, ctx->codesz, instrs, 8192);
-    if (ninstr == 0) {
-        free(instrs);
-        return false;
-    }
-    
-    bool *is_instr_start = calloc(ctx->codesz, sizeof(bool));
-    if (!is_instr_start) {
-        free(instrs);
-        return false;
-    }
-    
-    for (size_t i = 0; i < ninstr; i++) {
-        if (instrs[i].off < ctx->codesz) {
-            is_instr_start[instrs[i].off] = true;
-        }
-    }
-    
-    size_t i = 0;
-    while (i < ctx->codesz && *num_caves < _CVZ) {
-        if (is_instr_start[i]) {
-            i++;
-            continue;
-        }
-        
-        size_t pad_len = 0;
-        size_t max_scan = MIN(ctx->codesz - i, 100);
-        
-        for (size_t j = 0; j < max_scan; j++) {
-            uint8_t byte = ctx->working_code[i + j];
-            if (byte == 0x00 || byte == 0x90 || byte == 0xCC) {
-                pad_len++;
-            } else {
-                break;
-            }
-        }
-        
-        if (pad_len >= PAD_) {
-            bool valid_cave = true;
-            for (size_t k = i; k < i + pad_len && k < ctx->codesz; k++) {
-                if (is_instr_start[k]) {
-                    valid_cave = false;
-                    break;
-                }
-            }
-            
-            if (valid_cave && !chk_prot(i, ctx->ranges, ctx->numcheck)) {
-                caves[(*num_caves) * 2]     = i;
-                caves[(*num_caves) * 2 + 1] = i + pad_len;
-                (*num_caves)++;
-                i += pad_len;
-                continue;
-            }
-        }
-        
-        i++;
-    }
-    
-    free(instrs);
-    free(is_instr_start);
-    
-    return *num_caves > 0;
-}
-
-/* Inject valid but useless instructions into padding regions */
-static bool apply_jnk(context_t *ctx, unsigned intensity, size_t max_size) {
-    if (!ctx || ctx->is_shellcode) return true;
-
-    size_t size_budget = (max_size > ctx->codesz) ? (max_size - ctx->codesz) : 0;
-    if (size_budget < 16) return jnk_fill(ctx, intensity);  
-
-    size_t junk_instr_capacity = 8192;
-    instr_info_t *instrs = malloc(junk_instr_capacity * sizeof(instr_info_t));
-    if (!instrs) return false;
-    size_t ninstr = decode_map(ctx->working_code, ctx->codesz, instrs, junk_instr_capacity);
-    if (ninstr == 0) { free(instrs); return false; }
-
-    int changes = 0;
-
-    for (size_t i = 0; i < ninstr && size_budget > 0; i++) {
-        size_t offset = instrs[i].off;
-
-        if (instrs[i].cf) continue;
-        if (chk_prot(offset, ctx->ranges, ctx->numcheck)) continue;
-        if ((chacha20_random(&ctx->rng) % 10) >= (intensity * 3)) continue;
-
-        uint64_t caves[_CVZ * 2];
-        int num_caves = 0;
-        if (!cave_it(ctx, caves, &num_caves)) continue;
-        
-        bool in_cave = false;
-        size_t cave_start = 0, cave_end = 0;
-        for (int cave_idx = 0; cave_idx < num_caves; cave_idx++) {
-            uint64_t c_start = caves[cave_idx * 2];
-            uint64_t c_end = caves[cave_idx * 2 + 1];
-            if (offset >= c_start && offset < c_end) {
-                in_cave = true;
-                cave_start = (size_t)c_start;
-                cave_end = (size_t)c_end;
-                break;
-            }
-        }
-        if (!in_cave) continue;
-
-        uint8_t junk_buf[8];
-        size_t junk_len;
-        spew_trash(junk_buf, &junk_len, &ctx->rng);
-
-        if (offset + instrs[i].len + junk_len > cave_end) continue;
-        if (!Ampbuff(ctx, ctx->codesz + junk_len)) {
-            free(instrs);
-            return changes > 0;
-        }
-
-        size_t insert_point = offset + instrs[i].len;
-        memmove(ctx->working_code + insert_point + junk_len,
-                ctx->working_code + insert_point,
-                ctx->codesz - insert_point);
-        memcpy(ctx->working_code + insert_point, junk_buf, junk_len);
-        ctx->codesz += junk_len;
-        size_budget -= junk_len;
-        changes++;
-
-        for (size_t j = i + 1; j < ninstr; j++) {
-            instrs[j].off += junk_len;
-        }
-    }
-
-    free(instrs);
-    return changes >= 0;
-}
-
-/* In-place mutations (same size) */
-static bool jnk_fill(context_t *ctx, unsigned intensity) {
-    if (!ctx || ctx->codesz == 0) return false;
-
-    int changes = 0;
-    size_t offset = 0;
-
-    size_t start = (ctx->codesz * 3) / 10;
-    size_t end   = (ctx->codesz * 7) / 10;
-
-    while (offset < ctx->codesz) {
-        x86_inst_t inst;
-        if (!decode_x86_withme(ctx->working_code + offset, ctx->codesz - offset, 0, &inst, NULL) || !inst.valid) {
-            offset++;
-            continue;
-        }
-
-        if (offset < start || offset >= end) { 
-            offset += inst.len; 
-            continue; 
-        }
-        
-        if (chk_prot(offset, ctx->ranges, ctx->numcheck) || inst.is_control_flow) {
-            offset += inst.len;
-            continue;
-        }
-
-        if ((chacha20_random(&ctx->rng) % 100) >= (intensity * 10)) {
-            offset += inst.len; 
-            continue;
-        }
-
-        uint8_t backup[16];
-        memcpy(backup, ctx->working_code + offset, inst.len);
-        bool mutated = false;
-
-        if (inst.len == 2 && inst.raw[0] == 0x89 && inst.has_modrm) {
-            uint8_t modrm = inst.raw[1];
-            uint8_t mod = (modrm >> 6) & 3;
-            
-            if (mod == 3) {
-                uint8_t r1 = chacha20_random(&ctx->rng) % 8;
-                uint8_t r2 = chacha20_random(&ctx->rng) % 8;
-                
-                // stack pointers and same-register
-                if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5 && r1 != r2) {
-                    ctx->working_code[offset]     = 0x89;
-                    ctx->working_code[offset + 1] = 0xC0 | (r1 << 3) | r2;
-                    mutated = true;
-                }
-            }
-        } else if (inst.len == 3 && inst.raw[0] == 0x48 && inst.raw[1] == 0x89 && inst.has_modrm) {
-            uint8_t modrm = inst.raw[2];
-            uint8_t mod = (modrm >> 6) & 3;
-            
-            if (mod == 3) {
-                uint8_t r1 = chacha20_random(&ctx->rng) % 8;
-                uint8_t r2 = chacha20_random(&ctx->rng) % 8;
-                
-                if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5 && r1 != r2) {
-                    ctx->working_code[offset]     = 0x48;
-                    ctx->working_code[offset + 1] = 0x89;
-                    ctx->working_code[offset + 2] = 0xC0 | (r1 << 3) | r2;
-                    mutated = true;
-                }
-            }
-        } else if (inst.len == 3 && inst.raw[0] == 0x48 && inst.raw[1] == 0x31 && inst.has_modrm) {
-            uint8_t modrm = inst.raw[2];
-            uint8_t mod = (modrm >> 6) & 3;
-            
-            if (mod == 3) {
-                uint8_t r1 = chacha20_random(&ctx->rng) % 8;
-                uint8_t r2 = chacha20_random(&ctx->rng) % 8;
-                
-                if (r1 != 4 && r1 != 5 && r2 != 4 && r2 != 5) {
-                    ctx->working_code[offset]     = 0x48;
-                    ctx->working_code[offset + 1] = 0x31;
-                    ctx->working_code[offset + 2] = 0xC0 | (r1 << 3) | r2;
-                    mutated = true;
-                }
-            }
-        }
-
-        if (mutated) {
-            x86_inst_t test_inst;
-            if (!(decode_x86_withme(ctx->working_code + offset, ctx->codesz - offset, 0, &test_inst, NULL) && 
-                  test_inst.valid && test_inst.len == inst.len)) {
-                memcpy(ctx->working_code + offset, backup, inst.len);
-            } else {
-                changes++;
-            }
-        }
-        
-        offset += inst.len > 0 ? inst.len : 1;
-    }
-
-    return changes > 0;
-}
-
 /* Main mutation pipeline expansion, mutations, register swaps, junk injection */
 bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {    
     if (!ctx || !ctx->working_code || ctx->codesz == 0) return false;
@@ -750,7 +526,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
 #endif
     
     if (growth_budget <= 0) {
-        return reg_mut(ctx, generation) || jnk_fill(ctx, generation);
+        return reg_mut(ctx, generation);
     }
 
     size_t needed_capacity = ctx->codesz + growth_budget;
@@ -819,28 +595,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         mutate(ctx->working_code, ctx->codesz, &ctx->rng, generation, &engine_ctx);
     }
 
-    bool reg_success = reg_mut(ctx, intensity);
-    bool jnk_success = jnk_fill(ctx, intensity);
-    
-    if (!reg_success && !jnk_success) {
-        reg_success = reg_mut(ctx, intensity + 2);
-        jnk_success = jnk_fill(ctx, intensity + 2);
-        if (!reg_success && !jnk_success) {
-            goto rollback;
-        }
-    }
-
     size_t remaining_budget = (ctx->codesz < max_size) ? (max_size - ctx->codesz) : 0;
-    if (remaining_budget > 0) {
-        uint64_t cool[16]; 
-        int coolnum = 0;
-        cave_it(ctx, cool, &coolnum);
-        
-        if (coolnum > 0) {
-            success = apply_jnk(ctx, intensity / 2, ctx->codesz + remaining_budget);
-            if (!success) goto rollback;
-        }
-    }
 
     if (!clear_mut(ctx)) goto rollback;
     if (!mach_O(ctx->working_code, ctx->codesz)) goto rollback;
@@ -1073,30 +828,30 @@ static size_t embed_marker(uint8_t *code, size_t size, uint32_t generation) {
     
     /* Look for padding (0x90, 0x00, 0xCC) we need at least 16 contiguous bytes */
     size_t padding_offset = NOFFSET__;
-    size_t padding_len = 0;
+    size_t max_padding_len = 0;
     
     for (size_t i = 0; i <= size - sizeof(marker_t); i++) {
-        size_t padding_len = 0;
+        size_t current_padding_len = 0;
         for (size_t j = 0; j < size - i && j < 256; j++) {
             uint8_t byte = code[i + j];
             if (byte == 0x90 || byte == 0x00 || byte == 0xCC) {
-                padding_len++;
+                current_padding_len++;
             } else {
                 break;
             }
         }
         
-        if (padding_len >= sizeof(marker_t)) {
-            if (padding_len > padding_len) {
+        if (current_padding_len >= sizeof(marker_t)) {
+            if (current_padding_len > max_padding_len) {
                 padding_offset = i;
-                padding_len = padding_len;
+                max_padding_len = current_padding_len;
             }
         }
     }
     
     if (padding_offset != NOFFSET__) {
         memcpy(code + padding_offset, &new_marker, sizeof(marker_t));
-        DBG("[*] Marker in %zu-byte at 0x%zx\n", padding_len, padding_offset);
+        DBG("[*] Marker in %zu-byte at 0x%zx\n", max_padding_len, padding_offset);
         return padding_offset;
     }
     
@@ -1271,7 +1026,6 @@ int mutator(void) {
         return 1;
     }
     
-    unsigned max_generations = 2 + (chacha20_random(&ctx.rng) % 3);
     bool success = false;
     bool mutated = false;
     
