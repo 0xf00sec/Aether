@@ -2280,18 +2280,6 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
             continue;
         }
 
-        if ((chacha20_random(rng) % 100) < (mutation_intensity * 3)) {
-            size_t temp_size = size;
-            if (apply_expansion(code, &temp_size, offset, &inst, liveness, rng)) {
-                x86_inst_t new_inst;
-                if (decode_x86_withme(code + offset, size - offset, 0, &new_inst, NULL) && new_inst.valid) {
-                    if (log) drop_mut(log, offset, new_inst.len, MUT_EXPAND, gen, "inst expand");
-                    offset += new_inst.len;
-                    continue;
-                }
-            }
-        }
-
         bool mutated = false;
 
         if (inst.has_modrm && inst.len <= 8 && inst.len >= 2) {
