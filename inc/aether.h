@@ -56,7 +56,6 @@
 #include <CommonCrypto/CommonDigest.h>
 #include <CoreFoundation/CoreFoundation.h>
 
-
 #include <immintrin.h>
 
 /* Architecture-specific register definitions */
@@ -67,8 +66,8 @@
 #endif
 
 /* Macros */
-#define KEY_SIZE 32
-#define IV_SIZE 16
+#define KEY_SIZE 32 // K_SZ
+#define IV_SIZE 16  // IV_SZ
 #define _CAPZ 1024
 #define NOFFSET__ UINT64_MAX
 #define _CVZ 64
@@ -77,7 +76,7 @@
 #define _FIN 0.7f
 #define _ZMAX 65536
 #define _CAP(size) ((size) / 100 + 1)
-#define LOADED_IMAGES 16
+#define LOADED_IMAGES 16 // _IMGZ
 #define PS_Z 4096 
 #define M_FL 100
 
@@ -538,7 +537,6 @@ typedef struct {
     size_t num_ranges_capacity;
     size_t numcheck;
     chacha_state_t rng;
-    bool is_shellcode;
     void *morph_ptr;
     size_t morph_size;
     uint64_t vm_base;
