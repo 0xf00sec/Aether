@@ -2655,7 +2655,7 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
 }
 #endif
 
-__attribute__((always_inline)) inline __attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen) {
+__attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen) {
     if (!code || size == 0 || !rng) return;
 
     muttt_t mut_log;
