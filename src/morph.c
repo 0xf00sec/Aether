@@ -1,4 +1,5 @@
 #include <aether.h>
+#include <forge.h>
  
 static size_t g_marker_offset = NOFFSET__;
 static void clear_tx(context_t *ctx);
@@ -396,10 +397,7 @@ static bool reg_mut(context_t *ctx, unsigned intensity) {
     size_t start = ctx->codesz * _BEG;
     size_t end   = ctx->codesz * _FIN;
     size_t changes = 0;
-    size_t swaps_done = 0;
     size_t max_changes = _CAP(ctx->codesz);
-    size_t max_swaps   = MIN(ctx->cfg.num_blocks / 2, 8);
-    bool block_changed = false;
 
     size_t offset = 0;
     size_t attempts = 0;
@@ -426,28 +424,63 @@ static bool reg_mut(context_t *ctx, unsigned intensity) {
 
             uint8_t reg = (inst.modrm >> 3) & 7;
             uint8_t rm  = inst.modrm & 7;
+            uint8_t mod = (inst.modrm >> 6) & 3;
 
-            if ((reg >= 4 && reg <= 5) || (rm >= 4 && rm <= 5)) {
+            /* Only skip if DESTINATION is a stack pointer (would crash) */
+            /* Allow ESP/EBP as SOURCE */
+            if (mod == 3 && rm >= 4 && rm <= 5) {
+                /* R/M is destination in most MOV variants skip */
+                offset += inst.len;
+                continue;
+            }
+            
+            /* Only mutate register-to-register (mod == 3) */
+            if (mod != 3) {
                 offset += inst.len;
                 continue;
             }
 
             uint8_t new_reg = jack_reg(&liveness, reg, offset, &ctx->rng);
-            if (new_reg != reg && new_reg != 4 && new_reg != 5) {
-                uint8_t new_modrm = (inst.modrm & 0xC7) | (new_reg << 3);
-                size_t modrm_offset = offset + inst.opcode_len;
+            
+            if (new_reg == reg) {
+                offset += inst.len;
+                continue;
+            }
+            
+            if (inst.opcode[0] == 0x89 && new_reg >= 4 && new_reg <= 5) {
+                /* skip */
+                offset += inst.len;
+                continue;
+            }
+            
+            uint8_t new_modrm = (inst.modrm & 0xC7) | (new_reg << 3);
+            size_t modrm_offset = offset + inst.opcode_len;
 
-                if (modrm_offset < ctx->codesz) {
-                    uint8_t backup = ctx->working_code[modrm_offset];
-                    ctx->working_code[modrm_offset] = new_modrm;
+            if (modrm_offset < ctx->codesz) {
+                uint8_t backup = ctx->working_code[modrm_offset];
+                ctx->working_code[modrm_offset] = new_modrm;
 
-                    x86_inst_t test_inst;
-                    if (!(decode_x86_withme(ctx->working_code + offset, ctx->codesz - offset, 0, &test_inst, NULL) &&
-                          test_inst.valid && !test_inst.ring0 && is_op_ok(ctx->working_code + offset))) {
-                        ctx->working_code[modrm_offset] = backup;
-                    } else {
-                        changes++;
+                /* Validate */
+                x86_inst_t test_inst;
+                bool valid = decode_x86_withme(ctx->working_code + offset, ctx->codesz - offset, 0, &test_inst, NULL) &&
+                             test_inst.valid && 
+                             !test_inst.ring0 &&  /* No privileged instructions */
+                             test_inst.len == inst.len &&  /* Length must match */
+                             test_inst.opcode[0] == inst.opcode[0];  /* Opcode must match */
+                
+                /* Only if destination isn't stackp* */
+                if (valid && test_inst.has_modrm && inst.opcode[0] == 0x89) {
+                    uint8_t result_rm = test_inst.modrm & 7;
+                    uint8_t result_mod = (test_inst.modrm >> 6) & 3;
+                    if (result_mod == 3 && (result_rm == 4 || result_rm == 5)) {
+                        valid = false;  /* Would write to ESP/EBP */
                     }
+                }
+                
+                if (!valid) {
+                    ctx->working_code[modrm_offset] = backup;
+                } else {
+                    changes++;
                 }
             }
         }
@@ -455,57 +488,187 @@ static bool reg_mut(context_t *ctx, unsigned intensity) {
         offset += inst.len;
     }
 
-    if (ctx->cfg.num_blocks >= 2) {
-        size_t *perm = malloc(ctx->cfg.num_blocks * sizeof(size_t));
-        if (!perm) return changes > 0;
+    return changes > 0 || intensity == 0;
+}
 
-        for (size_t i = 0; i < ctx->cfg.num_blocks; i++) perm[i] = i;
-
-        for (size_t i = ctx->cfg.num_blocks - 1; i > 0; i--) {
-            if ((chacha20_random(&ctx->rng) % 100) < intensity * 15) {
-                size_t j = chacha20_random(&ctx->rng) % (i + 1);
-                size_t tmp = perm[i];
-                perm[i] = perm[j];
-                perm[j] = tmp;
-            }
+/* Inject opaque predicates at basic block boundaries */
+static bool mix_opaques(context_t *ctx, unsigned intensity) {
+    if (!ctx || !ctx->cfg.blocks || ctx->cfg.num_blocks < 2) return false;
+    
+    size_t injection = 0;
+    size_t max_injections = ctx->cfg.num_blocks / 3;
+    
+    for (size_t i = 1; i < ctx->cfg.num_blocks && injection < max_injections; i++) {
+        if ((chacha20_random(&ctx->rng) % 100) >= (intensity * 8)) continue;
+        
+        size_t block_start = ctx->cfg.blocks[i].start;
+        
+        /* Don't inject in protected regions */
+        if (chk_prot(block_start, ctx->ranges, ctx->numcheck)) continue;
+        
+        /* Generate opaque predicate */
+        uint8_t opaque_buf[64];
+        size_t opaque_len = 0;
+        uint32_t random_seed = chacha20_random(&ctx->rng);
+        
+#if defined(__x86_64__) || defined(_M_X64)
+        forge_ghost_x86(opaque_buf, &opaque_len, random_seed, &ctx->rng);
+#elif defined(__aarch64__) || defined(_M_ARM64)
+        forge_ghost_arm(opaque_buf, &opaque_len, random_seed, &ctx->rng);
+#else
+        continue;
+#endif
+        if (opaque_len == 0 || opaque_len > 64) continue;
+        
+        /* Check if we have space */
+        size_t needed_size = ctx->codesz + opaque_len;
+        if (needed_size > ctx->buffcap) {
+            if (!Ampbuff(ctx, needed_size)) break;
         }
-
-        for (size_t i = 0; i + 1 < ctx->cfg.num_blocks && swaps_done < max_swaps; i++) {
-            size_t idx_a = perm[i];
-            size_t idx_b = perm[i + 1];
-
-            size_t start_a = ctx->cfg.blocks[idx_a].start;
-            size_t start_b = ctx->cfg.blocks[idx_b].start;
-
-            if (start_a >= ctx->codesz || start_b >= ctx->codesz) continue;
-
-            size_t len_a = (idx_a + 1 < ctx->cfg.num_blocks) ? 
-                            ctx->cfg.blocks[idx_a + 1].start - start_a : ctx->codesz - start_a;
-            size_t len_b = (idx_b + 1 < ctx->cfg.num_blocks) ? 
-                            ctx->cfg.blocks[idx_b + 1].start - start_b : ctx->codesz - start_b;
-
-            if (chk_prot(start_a, ctx->ranges, ctx->numcheck) || 
-                chk_prot(start_b, ctx->ranges, ctx->numcheck)) continue;
-
-            if (len_a + len_b > ctx->buffcap) continue;
-
-            size_t min_len = MIN(len_a, len_b);
-            uint8_t *tmp_buf = malloc(min_len);
-            if (!tmp_buf) continue;
-
-            memcpy(tmp_buf, ctx->working_code + start_a, min_len);
-            memcpy(ctx->working_code + start_a, ctx->working_code + start_b, min_len);
-            memcpy(ctx->working_code + start_b, tmp_buf, min_len);
-            free(tmp_buf);
-
-            swaps_done++;
-            block_changed = true;
+        
+        /* Make room and inject */
+        memmove(ctx->working_code + block_start + opaque_len,
+                ctx->working_code + block_start,
+                ctx->codesz - block_start);
+        
+        memcpy(ctx->working_code + block_start, opaque_buf, opaque_len);
+        ctx->codesz += opaque_len;
+        
+        /* Update all block offsets after injection point */
+        for (size_t j = i; j < ctx->cfg.num_blocks; j++) {
+            ctx->cfg.blocks[j].start += opaque_len;
+            ctx->cfg.blocks[j].end += opaque_len;
         }
-
-        free(perm);
+        
+        injection++;
+        
+        DBG("Injected at %zu (+%zu bytes)\n", i, opaque_len);
     }
+    
+    return injection > 0;
+}
 
-    return (changes > 0) || block_changed || intensity == 0;
+/* Inject junk code throughout the binary */
+static bool junkify(context_t *ctx, unsigned intensity) {
+    if (!ctx || !ctx->working_code || ctx->codesz == 0) return false;
+    
+    size_t injection = 0;
+    size_t max_injections = ctx->codesz / 100;
+    size_t offset = 0;
+    
+    while (offset < ctx->codesz && injection < max_injections) {
+        if ((chacha20_random(&ctx->rng) % 100) >= (intensity * 5)) {
+            offset += 16;
+            continue;
+        }
+        
+        if (chk_prot(offset, ctx->ranges, ctx->numcheck)) {
+            offset += 16;
+            continue;
+        }
+        
+        uint8_t junk_buf[32];
+        size_t junk_len = 0;
+        
+#if defined(__x86_64__) || defined(_M_X64)
+        spew_trash(junk_buf, &junk_len, &ctx->rng);
+#elif defined(__aarch64__) || defined(_M_ARM64)
+        spew_trash_arm64(junk_buf, &junk_len, &ctx->rng);
+#else
+        offset += 16;
+        continue;
+#endif
+        
+        if (junk_len == 0 || junk_len > 32) {
+            offset += 16;
+            continue;
+        }
+        
+        size_t needed_size = ctx->codesz + junk_len;
+        if (needed_size > ctx->buffcap) {
+            if (!Ampbuff(ctx, needed_size)) break;
+        }
+        
+        memmove(ctx->working_code + offset + junk_len,
+                ctx->working_code + offset,
+                ctx->codesz - offset);
+        
+        memcpy(ctx->working_code + offset, junk_buf, junk_len);
+        ctx->codesz += junk_len;
+        
+        injection++;
+        offset += junk_len + 16;
+    }
+    
+    DBG("Injected %zu \n", injection);
+    return injection > 0;
+}
+
+/* Apply control flow flattening */
+static bool cflow_flatten(context_t *ctx, unsigned intensity) {
+    if (!ctx || !ctx->cfg.blocks || ctx->cfg.num_blocks < 3) return false;
+    
+    /* Only apply if we have enough blocks and intensity is high */
+    if ((chacha20_random(&ctx->rng) % 100) >= (intensity * 12)) return false;
+        
+    /* Backup before flattening */
+    uint8_t *backup = malloc(ctx->codesz);
+    if (!backup) return false;
+    memcpy(backup, ctx->working_code, ctx->codesz);
+    size_t backup_size = ctx->codesz;
+    
+    /* Apply flattening */
+#if defined(__x86_64__) || defined(_M_X64)
+    flatline_flow(ctx->working_code, ctx->codesz, &ctx->cfg, &ctx->rng);
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    flatline_flow_arm64(ctx->working_code, ctx->codesz, &ctx->cfg, &ctx->rng);
+#endif
+    
+    /* Validate the result */
+    if (!is_chunk_ok(ctx->working_code, ctx->codesz)) {
+        DBG("[!] CFG failed\n");
+        memcpy(ctx->working_code, backup, backup_size);
+        ctx->codesz = backup_size;
+        free(backup);
+        return false;
+    }
+    
+    free(backup);
+    return true;
+}
+
+/* Apply block shuffling with validation */
+static bool shuffler(context_t *ctx, unsigned intensity) {
+    if (!ctx || !ctx->cfg.blocks || ctx->cfg.num_blocks < 2) return false;
+    
+    if ((chacha20_random(&ctx->rng) % 100) >= (intensity * 10)) return false;
+    
+    DBG("[*] Shuffling blocks...\n");
+    
+    /* Backup before shuffling */
+    uint8_t *backup = malloc(ctx->codesz);
+    if (!backup) return false;
+    memcpy(backup, ctx->working_code, ctx->codesz);
+    size_t backup_size = ctx->codesz;
+    
+    /* Apply shuffling */
+#if defined(__x86_64__) || defined(_M_X64)
+    shuffle_blocks(ctx->working_code, ctx->codesz, &ctx->rng); /* engine */
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    shuffle_blocks_arm64(ctx->working_code, ctx->codesz, &ctx->rng);
+#endif
+    
+    /* Validate the result */
+    if (!is_chunk_ok(ctx->working_code, ctx->codesz)) {
+        DBG("[!] Block shuffling failed\n");
+        memcpy(ctx->working_code, backup, backup_size);
+        ctx->codesz = backup_size;
+        free(backup);
+        return false;
+    }
+    
+    free(backup);
+    return true;
 }
 
 /* Main mutation pipeline expansion, mutations, register swaps, junk injection */
@@ -514,20 +677,23 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
 
     size_t disk_limit = max_size;
     size_t memory_limit = ctx->buffcap;
-    bool memory_only = (ctx->codesz >= disk_limit);
     
 #ifdef FOO 
-    /* Disable expansions for disk mutation */
+    /* Disk mutations only, no expansions */
     size_t expansion_limit = 0;
     size_t growth_budget = 0;
 #else
-    size_t expansion_limit = memory_only ? memory_limit : disk_limit;
+    /* Memory-only mutations with full capabilities */
+    bool memory_only = true;
+    size_t expansion_limit = memory_limit;
     size_t growth_budget = (expansion_limit > ctx->codesz) ? (expansion_limit - ctx->codesz) : 0;
 #endif
-    
+
+#ifdef FOO
     if (growth_budget <= 0) {
-        return reg_mut(ctx, generation);
+    return reg_mut(ctx, generation);
     }
+#endif
 
     size_t needed_capacity = ctx->codesz + growth_budget;
     if (!Ampbuff(ctx, needed_capacity)) return false;
@@ -543,15 +709,19 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
     bool success = true;
     size_t size_before_expansion = ctx->codesz;
 
+    DBG("[*] Size: %zu bytes, budget: %zu bytes\n", ctx->codesz, growth_budget);
+
     liveness_state_t liveness;
     boot_live(&liveness);
     size_t max_expand_size = expansion_limit;
     
 #ifndef FOO
+    /* Code Expansion (memory-only) */
     if (generation >= 5 && ctx->codesz < max_expand_size) {
         unsigned depth = 1 + (generation / 10);
         if (depth > 3) depth = 3;
         
+        DBG("[*] Chain expansion (depth=%u)...\n", depth);
         size_t new_size = expand_with_chains(
             ctx->working_code, ctx->codesz, max_expand_size,
             &liveness, &ctx->rng, depth, intensity * 2
@@ -560,6 +730,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         if (new_size > ctx->codesz && new_size <= max_expand_size) {
             ctx->codesz = new_size;
             ctx->current_growth = ctx->codesz - ctx->original_size;
+            DBG("[*] Chain expansion %zu -> %zu bytes\n", size_before_expansion, ctx->codesz);
         }
     }
     
@@ -570,18 +741,21 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         );
         
         if (new_size > ctx->codesz && new_size <= max_expand_size) {
+            size_t old_size = ctx->codesz;
             ctx->codesz = new_size;
             ctx->current_growth = ctx->codesz - ctx->original_size;
         }
     }
 #endif
     
+    /* Rebuild CFG if code size changed */
     if (ctx->codesz != size_before_expansion) {
         if (ctx->cfg.blocks) {
             free(ctx->cfg.blocks);
             ctx->cfg.blocks = NULL;
         }
         
+        DBG("[*] Rebuilding CFG ...\n");
         if (!sketch_flow(ctx->working_code, ctx->codesz, &ctx->cfg)) {
             goto rollback;
         }
@@ -589,19 +763,128 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         crit_tap(ctx->hdr, ctx->text_vm_start, ctx->ranges, &ctx->numcheck, ctx->codesz);
     }
 
+#ifndef FOO
+    /* Control Flow Mutations (memory-only, generation 4+) */
+    if (memory_only && generation >= 4) {
+        
+        /* Apply control flow flattening */
+        if (generation >= 6 && ctx->cfg.num_blocks >= 5) {
+            if (cflow_flatten(ctx, intensity)) {
+                /* Rebuild CFG after flattening */
+                if (ctx->cfg.blocks) {
+                    free(ctx->cfg.blocks);
+                    ctx->cfg.blocks = NULL;
+                }
+                if (!sketch_flow(ctx->working_code, ctx->codesz, &ctx->cfg)) {
+                    goto rollback;
+                }
+            }
+        }
+        
+        /* Apply block shuffling */
+        if (generation >= 4 && ctx->cfg.num_blocks >= 2) {
+            if (shuffler(ctx, intensity)) {
+                /* Rebuild CFG after shuffling */
+                if (ctx->cfg.blocks) {
+                    free(ctx->cfg.blocks);
+                    ctx->cfg.blocks = NULL;
+                }
+                if (!sketch_flow(ctx->working_code, ctx->codesz, &ctx->cfg)) {
+                    goto rollback;
+                }
+            }
+        }
+        
+        /* Inject opaque predicates at block */
+        if (generation >= 5 && ctx->cfg.num_blocks >= 3) {
+            size_t size_before_opaques = ctx->codesz;
+            if (mix_opaques(ctx, intensity)) {
+                DBG("[+] Opaque predicates: %zu -> %zu bytes\n", size_before_opaques, ctx->codesz);
+                
+                /* Rebuild CFG after injection */
+                if (ctx->cfg.blocks) {
+                    free(ctx->cfg.blocks);
+                    ctx->cfg.blocks = NULL;
+                }
+                if (!sketch_flow(ctx->working_code, ctx->codesz, &ctx->cfg)) {
+                    goto rollback;
+                }
+                
+                crit_tap(ctx->hdr, ctx->text_vm_start, ctx->ranges, &ctx->numcheck, ctx->codesz);
+            }
+        }
+        
+        /* Inject junk code throughout */
+        if (generation >= 3) {
+            size_t size_before_junk = ctx->codesz;
+            if (junkify(ctx, intensity)) {
+                DBG("[+] Junk injection %zu -> %zu bytes\n", size_before_junk, ctx->codesz);
+            }
+        }
+    }
+#endif
+
+    /* Mutations (all) */
     if (generation >= 3) {
         engine_context_t engine_ctx;
         init_engine(&engine_ctx);
         mutate(ctx->working_code, ctx->codesz, &ctx->rng, generation, &engine_ctx);
     }
 
-    size_t remaining_budget = (ctx->codesz < max_size) ? (max_size - ctx->codesz) : 0;
+    /* Register Mutations (simple) */
+    if (!reg_mut(ctx, intensity)) {
+        DBG("[!] Mutations failed\n");
+    }
 
-    if (!clear_mut(ctx)) goto rollback;
-    if (!mach_O(ctx->working_code, ctx->codesz)) goto rollback;
+    /* Block Shuffling if not already done */
+#ifdef FOO
+    /* FOO mode apply block shuffling for disk mutations */
+    if (generation >= 2 && ctx->cfg.num_blocks >= 2 && 
+        (chacha20_random(&ctx->rng) % 100) < (intensity * 10)) {
+        DBG("[+] Block shuffling...\n");
+        
+        uint8_t *backup = malloc(ctx->codesz);
+        if (backup) {
+            memcpy(backup, ctx->working_code, ctx->codesz);
+            size_t backup_size = ctx->codesz;
+            
+#if defined(__x86_64__) || defined(_M_X64)
+            shuffle_blocks(ctx->working_code, ctx->codesz, &ctx->rng);
+#elif defined(__aarch64__) || defined(_M_ARM64)
+            shuffle_blocks_arm64(ctx->working_code, ctx->codesz, &ctx->rng);
+#endif
+            
+            /* Validate the result */
+            if (!is_chunk_ok(ctx->working_code, ctx->codesz)) {
+                DBG("[!] Block shuffling failed validation \n");
+                memcpy(ctx->working_code, backup, backup_size);
+                ctx->codesz = backup_size;
+            } else {
+                DBG("[+] Block shuffling applied\n");
+            }
+            
+            free(backup);
+        }
+    }
+#else
     
+#endif    
+
+    if (!clear_mut(ctx)) {
+        DBG("[!] clear_mut() failed\n");
+        goto rollback;
+    }
+    
+    if (!mach_O(ctx->working_code, ctx->codesz)) {
+        DBG("[-] mach_O() failed\n");
+        goto rollback;
+    }
+
+    /* what's what */
     size_t decode_errors = 0;
     size_t offset = 0;
+    
+#if defined(__x86_64__) || defined(_M_X64)
     while (offset < ctx->codesz) {
         x86_inst_t inst;
         if (!decode_x86_withme(ctx->working_code + offset, ctx->codesz - offset, 0, &inst, NULL) ||
@@ -612,12 +895,24 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         }
         offset += inst.len;
     }
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    while (offset + 4 <= ctx->codesz) {
+        arm64_inst_t inst;
+        if (!decode_arm64(ctx->working_code + offset, &inst) || !inst.valid) {
+            decode_errors++;
+        }
+        offset += 4;
+    }
+#endif
     
     size_t max_errors = ctx->codesz / 100;
-    if (decode_errors > max_errors) goto rollback;
+    if (decode_errors > max_errors) {
+        DBG("[!] Too many decode errors: %zu (max %zu)\n", decode_errors, max_errors);
+        goto rollback;
+    }
 
-    DBG("gen=%u, %zu->%zu (+%.1f%%)\n", generation, backup_sz, ctx->codesz,
-        100.0 * (ctx->codesz - backup_sz) / backup_sz);
+    DBG("Gen=%u, %zu->%zu (+%.1f%%), errors=%zu\n", generation, backup_sz, ctx->codesz,
+        100.0 * (ctx->codesz - backup_sz) / backup_sz, decode_errors);
 
     free(backup_code);
     return true;
@@ -630,7 +925,7 @@ rollback:
     return false;
 }
 
-// Final validation before disk write
+/* Final validation before disk write */
 static bool dsk_seg(context_t *ctx, size_t original_size) {     
     if (!clear_mut(ctx)) return false;
     if (ctx->codesz > original_size * 4) return false;
@@ -731,7 +1026,7 @@ static bool dsk_mut(context_t *ctx, const char *binary_path,
 }
 
 #ifndef FOO
-/* Apply mutations via reflective loading RELEASE mode path */
+/* Apply mutations via reflective loading */
 static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
     if (!ctx || !ctx->working_code || ctx->codesz == 0) {
         return false;
@@ -779,9 +1074,9 @@ static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
     bool success = exec_mem(macho_binary, macho_size);
     
     if (success) {
-        // 
+        /* Something */ 
     } else {
-        panic(); // Go Sideways
+        panic(); /* Go Sideways */
     }
     
     free(macho_binary);
@@ -1029,7 +1324,13 @@ int mutator(void) {
     bool success = false;
     bool mutated = false;
     
-    for (unsigned gen = 1; gen <= MX_GEN; gen++) {
+#ifdef FOO
+    unsigned max_generations = MX_GEN;
+#else
+    unsigned max_generations = MX_MEM;
+#endif
+    
+    for (unsigned gen = 1; gen <= max_generations; gen++) {
         memcpy(backup, ctx.working_code, MIN(ctx.codesz, text_size));
         size_t backup_size = ctx.codesz;
         
@@ -1045,11 +1346,17 @@ int mutator(void) {
     }
     
     if (mutated) {
-        DBG("Generations: %u\n", MX_GEN);
+        DBG("Generations: %u\n", max_generations);
         
         mutation_done = true;
         
 #ifdef FOO
+        /* Force code size to match original */
+        if (ctx.codesz != text_size) {
+            DBG("[!] Size mismatch: %zu != %zu, forcing to original\n", ctx.codesz, text_size);
+            ctx.codesz = text_size;
+        }
+        
         if (ctx.codesz <= text_size) {
             /* Update */
             size_t marker_offset = embed_marker(ctx.working_code, ctx.codesz, current_gen + 1);
@@ -1093,7 +1400,7 @@ int mutator(void) {
     } else {
         /* 
          * We mutate generation N directly into N+1 without keeping a pristine copy.
-         * It's different from what engines usually do whcih is preservin' the OG.
+         * It's different from what engines usually do which is preservin' the OG.
          * The 'ogicode'? Only used for counting changes, never for rollback.
          * The 'backup' in the loop? Only rolls back within a generation, not across.
          *
@@ -1101,10 +1408,15 @@ int mutator(void) {
          * we allow 1% decode errors get mutated again,
          * bad branches get shuffled again & corrupted regs get swapped again ...
          * Leavin' the binary's too fucked2mutate again.
-         * It's the cons for max obfuscation.
+         * It's the cons of max obfuscation.
          */
-        DBG("[!] No mutations after %u generations\n", MX_GEN);
+        DBG("[!] No mutations after %u generations\n", max_generations);
+#ifdef FOO
+        /* is expected if binary is already mutated */
+#else
+        /* this shouldn't happen */
         panic();
+#endif
     }
 
     free(backup);
