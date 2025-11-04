@@ -1143,33 +1143,34 @@ void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng
             }
             
             size_t instruction_addr_in_new_buffer = out + block_offset;
-            uint64_t current_absolute_target = 0;
+            size_t instruction_addr_in_og = b->start + block_offset; 
+            uint64_t current_absolute_target = 0; 
             bool should_patch = false;
             int patch_type = 0;
 
             if (inst.opcode[0] == 0xE8) {  /*  CALL rel32 */
-                current_absolute_target = instruction_addr_in_new_buffer + inst.len + (int32_t)inst.imm;
+                current_absolute_target = instruction_addr_in_og + inst.len + (int32_t)inst.imm;
                 should_patch = true;
                 patch_type = 2;
             } 
             else if (inst.opcode[0] == 0xE9) {  /*  JMP rel32 */
-                current_absolute_target = instruction_addr_in_new_buffer + inst.len + (int32_t)inst.imm;
+                current_absolute_target = instruction_addr_in_og + inst.len + (int32_t)inst.imm;
                 should_patch = true;
                 patch_type = 1;
             }
             else if (inst.opcode[0] == 0xEB) {  /*  JMP rel8 */
-                current_absolute_target = instruction_addr_in_new_buffer + inst.len + (int8_t)inst.imm;
+                current_absolute_target = instruction_addr_in_og + inst.len + (int8_t)inst.imm;
                 should_patch = true;
                 patch_type = 5;
             }
             else if (inst.opcode[0] >= 0x70 && inst.opcode[0] <= 0x7F) {  /*  Jcc rel8 */
-                current_absolute_target = instruction_addr_in_new_buffer + inst.len + (int8_t)inst.imm;
+                current_absolute_target = instruction_addr_in_og + inst.len + (int8_t)inst.imm;
                 should_patch = true;
                 patch_type = 3;
             } 
             else if (inst.opcode[0] == 0x0F && inst.opcode_len > 1 && 
                      inst.opcode[1] >= 0x80 && inst.opcode[1] <= 0x8F) {  /*  Jcc rel32 */
-                current_absolute_target = instruction_addr_in_new_buffer + inst.len + (int32_t)inst.imm;
+                current_absolute_target = instruction_addr_in_og + inst.len + (int32_t)inst.imm;
                 should_patch = true;
                 patch_type = 4;
             }
@@ -1534,6 +1535,7 @@ void shuffle_blocks(uint8_t *code, size_t size, void *rng) {
             x86_inst_t inst;
             if (!decode_x86_withme(nbuf+off+cur, blen-cur, 0, &inst, NULL) || !inst.valid) { cur++; continue; }
             size_t inst_off = off+cur;
+            size_t og_inst_off = b->start+cur; 
             int typ=0;
             if (inst.opcode[0]==0xE8) typ=2;
             else if (inst.opcode[0]==0xE9) typ=1;
@@ -1543,13 +1545,13 @@ void shuffle_blocks(uint8_t *code, size_t size, void *rng) {
             if (!typ) { cur+=inst.len; continue; }
 
             int64_t oldtgt=0;
-            if (typ==1||typ==2) oldtgt=inst_off+inst.len+(int32_t)inst.imm;
-            else if (typ==3||typ==5) oldtgt=inst_off+inst.len+(int8_t)inst.imm;
-            else if (typ==4) oldtgt=inst_off+inst.len+(int32_t)inst.imm;
+            if (typ==1||typ==2) oldtgt=og_inst_off+inst.len+(int32_t)inst.imm;
+            else if (typ==3||typ==5) oldtgt=og_inst_off+inst.len+(int8_t)inst.imm;
+            else if (typ==4) oldtgt=og_inst_off+inst.len+(int32_t)inst.imm;
 
             size_t tgt_blk=SIZE_MAX;
             for (size_t k=0;k<nb;k++) {
-                if (oldtgt>=cfg.blocks[k].start && oldtgt<cfg.blocks[k].end) { tgt_blk=k; break; }
+                if (oldtgt>=(int64_t)cfg.blocks[k].start && oldtgt<(int64_t)cfg.blocks[k].end) { tgt_blk=k; break; }
             }
 
             patches[num_patches].inst_off = inst_off;
@@ -2122,7 +2124,7 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                 uint8_t mod = (inst.modrm >> 6) & 3;
                 uint8_t reg = modrm_reg(inst.modrm);
                 
-                if (mod == 3) {
+                if (mod == 3 && reg != 4 && reg != 5) {
                     if (chacha20_random(rng) % 2) {
                         code[offset] = 0x29;
                     } else {
@@ -2138,40 +2140,42 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
             }
             else if ((inst.opcode[0] & 0xF8) == 0xB8 && inst.imm == 0) {
                 uint8_t reg = inst.opcode[0] & 0x7;
-                size_t new_len = 0;
-                
-                switch(chacha20_random(rng) % 3) {
-                    case 0:
-                        code[offset] = 0x31;
-                        code[offset+1] = 0xC0 | (reg << 3) | reg;
-                        new_len = 2;
-                        break;
-                    case 1:
-                        code[offset] = 0x83;
-                        code[offset+1] = 0xE0 | reg;
-                        code[offset+2] = 0x00;
-                        new_len = 3;
-                        break;
-                    case 2:
-                        code[offset] = 0x29;
-                        code[offset+1] = 0xC0 | (reg << 3) | reg;
-                        new_len = 2;
-                        break;
+                if (reg != 4 && reg != 5) {
+                    size_t new_len = 0;
+                    
+                    switch(chacha20_random(rng) % 3) {
+                        case 0:
+                            code[offset] = 0x31;
+                            code[offset+1] = 0xC0 | (reg << 3) | reg;
+                            new_len = 2;
+                            break;
+                        case 1:
+                            code[offset] = 0x83;
+                            code[offset+1] = 0xE0 | reg;
+                            code[offset+2] = 0x00;
+                            new_len = 3;
+                            break;
+                        case 2:
+                            code[offset] = 0x29;
+                            code[offset+1] = 0xC0 | (reg << 3) | reg;
+                            new_len = 2;
+                            break;
+                    }
+                    
+                    if (new_len < inst.len && offset + inst.len <= size) {
+                        memset(code + offset + new_len, 0x90, inst.len - new_len);
+                    }
+                    
+                    if (!is_op_ok(code + offset)) {
+                        if (offset + inst.len <= size && inst.len > 0) memcpy(code + offset, inst.raw, inst.len);
+                    } else mutated = true;
                 }
-                
-                if (new_len < inst.len && offset + inst.len <= size) {
-                    memset(code + offset + new_len, 0x90, inst.len - new_len);
-                }
-                
-                if (!is_op_ok(code + offset)) {
-                    if (offset + inst.len <= size && inst.len > 0) memcpy(code + offset, inst.raw, inst.len);
-                } else mutated = true;
             }
             else if (inst.opcode[0] == 0x83 && inst.has_modrm && inst.raw[2] == 0x01) {
                 uint8_t reg = modrm_rm(inst.modrm);
                 uint8_t mod = (inst.modrm >> 6) & 3;
                 
-                if (mod == 3 && offset + 3 <= size) {
+                if (mod == 3 && reg != 4 && reg != 5 && offset + 3 <= size) {
                     if (chacha20_random(rng) % 2) {
                         code[offset] = 0x48;
                         code[offset+1] = 0xFF;
@@ -2202,7 +2206,7 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                 uint8_t rm = modrm_rm(inst.modrm);
                 uint8_t mod = (inst.modrm >> 6) & 3;
                 
-                if (reg == rm && inst.disp == 0 && !inst.has_sib && mod != 0) {
+                if (reg == rm && reg != 4 && reg != 5 && rm != 4 && rm != 5 && inst.disp == 0 && !inst.has_sib && mod != 0) {
                     code[offset] = 0x89;
                     if (!is_op_ok(code + offset)) code[offset] = 0x8D;
                     else mutated = true;
@@ -2211,7 +2215,7 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
             else if (inst.opcode[0] == 0x85 && inst.has_modrm) {
                 uint8_t reg = modrm_reg(inst.modrm);
                 uint8_t rm = modrm_rm(inst.modrm);
-                if (reg == rm) {
+                if (reg == rm && reg != 4 && reg != 5) {
                     code[offset] = 0x39;
                     if (!is_op_ok(code + offset)) code[offset] = 0x85;
                     else mutated = true;
@@ -2274,6 +2278,10 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
         /* Instruction splitting expand MOV reg,imm into equivalent sequences */
         if (!mutated && (inst.opcode[0] & 0xF8) == 0xB8 && inst.imm != 0 && inst.len >= 5) {
             uint8_t target_reg = inst.opcode[0] & 0x7;
+            if (target_reg == 4 || target_reg == 5) {
+                offset += inst.len;
+                continue;
+            }
             switch(chacha20_random(rng) % 30) { /*  Momma didn't raise no pussy */
                 case 0: 
                     if (offset + 10 <= size) {
@@ -2378,6 +2386,14 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
         }        
 
         if (!mutated && (chacha20_random(rng) % 10) < (mutation_intensity / 4)) {
+            if (inst.has_modrm) {
+                uint8_t reg = modrm_reg(inst.modrm);
+                uint8_t rm = modrm_rm(inst.modrm);
+                if (reg == 4 || reg == 5 || rm == 4 || rm == 5) {
+                    offset += inst.len;
+                    continue;
+                }
+            }
             uint8_t orgi_op = inst.opcode[0];
             uint8_t new_opcode = orgi_op;
             switch(chacha20_random(rng) % 4) {
