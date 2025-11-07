@@ -333,7 +333,44 @@ typedef enum {
 } arm_op_type_t;
 
 /* ARM64 register type */
-typedef uint8_t arm_reg_t;
+typedef enum {
+    ARM_REG_INVALID = -1,
+    ARM_REG_X0 = 0,
+    ARM_REG_X1,
+    ARM_REG_X2,
+    ARM_REG_X3,
+    ARM_REG_X4,
+    ARM_REG_X5,
+    ARM_REG_X6,
+    ARM_REG_X7,
+    ARM_REG_X8,
+    ARM_REG_X9,
+    ARM_REG_X10,
+    ARM_REG_X11,
+    ARM_REG_X12,
+    ARM_REG_X13,
+    ARM_REG_X14,
+    ARM_REG_X15,
+    ARM_REG_X16,
+    ARM_REG_X17,
+    ARM_REG_X18,
+    ARM_REG_X19,
+    ARM_REG_X20,
+    ARM_REG_X21,
+    ARM_REG_X22,
+    ARM_REG_X23,
+    ARM_REG_X24,
+    ARM_REG_X25,
+    ARM_REG_X26,
+    ARM_REG_X27,
+    ARM_REG_X28,
+    ARM_REG_X29,   /* FP (frame pointer) */
+    ARM_REG_X30,   /* LR (link register) */
+    ARM_REG_SP,    /* Stack pointer (X31 in encoding) */
+    ARM_REG_PC     /* Program counter (not encoded as X register) */
+} arm_reg_t;
+
+#define ARM64_REG_X30 ARM_REG_X30
 
 /* ARM64 condition codes */
 typedef enum {
