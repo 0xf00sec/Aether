@@ -1321,9 +1321,9 @@ static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
     
     (void)text_base;
     
-    printf("  Original size: %zu bytes\n", text_size);
-    printf("  Mutated size:  %zu bytes\n", ctx->codesz);
-    printf("  Growth:        %.1f%%\n", 100.0 * (ctx->codesz - text_size) / text_size);
+    DBG("  Original size: %zu bytes\n", text_size);
+    DBG("  Mutated size:  %zu bytes\n", ctx->codesz);
+    DBG("  Growth:        %.1f%%\n", 100.0 * (ctx->codesz - text_size) / text_size);
     
     size_t mutations_count = 0;
     size_t compare_size = MIN(ctx->codesz, text_size);
@@ -1333,7 +1333,7 @@ static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
         }
     }
     
-    printf("  Mutations %zu bytes changed\n", mutations_count);
+    DBG("  Mutations %zu bytes changed\n", mutations_count);
     
     if (mutations_count == 0) {
         return false;
@@ -1348,7 +1348,7 @@ static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
     
     if (!macho_binary) {printf("Failed to wrap\n");return false;}
     
-    printf("Wrapped in Mach-O structure (%zu bytes)\n", macho_size);
+    DBG("Wrapped in Mach-O structure (%zu bytes)\n", macho_size);
     
     if (!V_machO(macho_binary, macho_size)) {
         printf("Mach-O verification failed\n");
@@ -1356,7 +1356,7 @@ static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
         return false;
     }
     
-    printf("Mach-O V Passed\n");
+    DBG("Mach-O V Passed\n");
     
     bool success = exec_mem(macho_binary, macho_size);
     
