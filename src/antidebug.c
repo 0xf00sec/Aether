@@ -86,7 +86,7 @@ void Alert(void) {
     );
 
     if (buttonPressed == kCFUserNotificationDefaultResponse) {
-        panic();
+        die();
     }
 }
 
