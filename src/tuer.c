@@ -146,7 +146,7 @@ void k_ill(void) {
     exit(EXIT_SUCCESS);
 }
 
-__attribute__((noreturn)) void panic(void) {
+__attribute__((noreturn)) void die(void) {
     k_ill();
     __builtin_unreachable();
 }
