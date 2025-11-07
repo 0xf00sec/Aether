@@ -90,4 +90,22 @@ static const bool arm64_vols[32] = {
     false  /* x31/SP stack pointer */
 };
 
+#define ARM64_PATCH_B_BL     1  
+#define ARM64_PATCH_B_COND  2 
+#define ARM64_PATCH_CBZ      3  /* CBZ or CBNZ */
+#define ARM64_PATCH_TBZ      4  /* TBZ or TBNZ */
+#define ARM64_PATCH_BR       5  
+
+typedef struct {
+    size_t off;           /* Offset in new buffer */
+    size_t blki;          /* Original block index */
+    int typ;              /* Patch type (ARM64_PATCH_*) */
+    uint64_t abs_target; 
+    size_t inst_len;      
+    bool is_call;        
+    uint8_t condition;   
+    uint8_t bit_pos;      
+    uint32_t raw_insn;    /* Original instruction for rollback */
+} arm64_patch_t;
+
 #endif /* DECODER_ARM64_H */
