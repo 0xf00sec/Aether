@@ -501,11 +501,11 @@ static void clear_tx(context_t *ctx) {
     }
 
     if (diff == 0) {
-        printf("[*] Entry diff: no changes across %zu bytes\n", len);
+        DBG("[*] Entry diff: no changes across %zu bytes\n", len);
         return;
     }
 
-    printf("[*] Entry diff: %zu/%zu bytes differ (first @ 0x%zx)\n", diff, len, first);
+    DBG("[*] Entry diff: %zu/%zu bytes differ (first @ 0x%zx)\n", diff, len, first);
 
     size_t start = first;
     if (start > 8) {
@@ -515,17 +515,17 @@ static void clear_tx(context_t *ctx) {
     }
     size_t end = MIN(len, start + 32);
 
-    printf("    Original: ");
+    DBG("    Original: ");
     for (size_t i = start; i < end; i++) {
-        printf("%02x", orig[i]);
-        if (i + 1 < end) printf(" ");
+        DBG("%02x", orig[i]);
+        if (i + 1 < end) DBG(" ");
     }
-    printf("\n    Mutated : ");
+    DBG("\n    Mutated : ");
     for (size_t i = start; i < end; i++) {
-        printf("%02x", mut[i]);
-        if (i + 1 < end) printf(" ");
+        DBG("%02x", mut[i]);
+        if (i + 1 < end) DBG(" ");
     }
-    printf("\n");
+    DBG("\n");
 } */
 
 /* Decode everything and check valid/invalid ratio */
@@ -1346,12 +1346,12 @@ static bool mem_mut(context_t *ctx, uint8_t *text_base, size_t text_size) {
     size_t macho_size = 0;
     uint8_t *macho_binary = wrap_macho(ctx->working_code, ctx->codesz, &macho_size);
     
-    if (!macho_binary) {printf("Failed to wrap\n");return false;}
+    if (!macho_binary) {DBG("Failed to wrap\n");return false;}
     
     DBG("Wrapped in Mach-O structure (%zu bytes)\n", macho_size);
     
     if (!V_machO(macho_binary, macho_size)) {
-        printf("Mach-O verification failed\n");
+        DBG("Mach-O verification failed\n");
         free(macho_binary);
         return false;
     }
@@ -1665,7 +1665,7 @@ int mutator(void) {
         size_t backup_size = ctx.codesz;
         
         if (!mOrph(&ctx, gen, text_size)) {
-            printf("[!] Generation %u failed\n", gen);
+            DBG("[!] Generation %u failed\n", gen);
             memcpy(ctx.working_code, backup, text_size);
             ctx.codesz = backup_size;
             break;
@@ -1673,7 +1673,7 @@ int mutator(void) {
         
         /* Validate  */
         if (!is_chunk_ok(ctx.working_code, ctx.codesz)) {
-            printf("[!] Generation %u produced invalid code\n", gen);
+            DBG("[!] Generation %u produced invalid code\n", gen);
             memcpy(ctx.working_code, backup, text_size);
             ctx.codesz = backup_size;
             break;
@@ -1681,7 +1681,7 @@ int mutator(void) {
         
         if (memcmp(ctx.working_code, backup, MIN(ctx.codesz, text_size)) != 0) {
             mutated = true;
-            printf("[+] Generation %u: %zu bytes (%.1f%% growth)\n", 
+            DBG("[+] Generation %u: %zu bytes (%.1f%% growth)\n", 
                 gen, ctx.codesz, 100.0 * (ctx.codesz - backup_size) / backup_size);
         }
     }
