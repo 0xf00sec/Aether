@@ -246,7 +246,6 @@ static void run_constructors(uint8_t *original_data, size_t size, void *base) {
     DBG("No constructors\n");
 }
 
-/* Forward declarations for JIT helpers */
 extern void* alloc_dual(size_t size, void **rx_out);
 extern void free_dual(void *rw_addr, void *rx_addr, size_t size);
 #if defined(__aarch64__)
@@ -320,10 +319,9 @@ static mapping_t* map_exec(uint8_t *data, size_t size) {
     mapping->is_jit = false;
     
 #if defined(__aarch64__)
-    /* Try Apple Silicon JIT API first (requires entitlement) */
+    /* need some entitlement */
     void *jit_mem = jit_alloc(total_size);
     if (jit_mem) {
-        DBG("Using MAP_JIT (Apple Silicon)\n");
         mapping->rw_base = jit_mem;
         mapping->rx_base = jit_mem;  /* Same address, toggle with pthread_jit_write_protect */
         mapping->is_dual = false;
@@ -344,10 +342,7 @@ static mapping_t* map_exec(uint8_t *data, size_t size) {
         goto have_memory;
     }
     
-    /* 
-     * Fallback: file-backed memory via shm_open
-     * This has better chance of getting exec permission
-     */
+    /* file-backed memory via shm_open, this has better chance of getting exec permission */
     int shm_fd = -1;
     char shm_name[64];
     DBG(shm_name, sizeof(shm_name), "/tmp.%d.%lx", getpid(), (unsigned long)time(NULL));
@@ -372,8 +367,6 @@ static mapping_t* map_exec(uint8_t *data, size_t size) {
         close(shm_fd);
     }
     
-    /* Last resort: anonymous mapping */
-    DBG("Falling back to anonymous mapping\n");
     void *mem = mmap(NULL, total_size, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANON, -1, 0);
     
@@ -448,16 +441,14 @@ have_memory:
     DBG("All segments mapped to RW region\n");
     
 #if defined(__aarch64__)
-    /* Disable write protection on Apple Silicon JIT */
+    /* Disable write protection */
     if (mapping->is_jit) {
         write_disable();
     }
 #endif
     
-    /* 
-     * If single mapping (not dual), try to make it executable
-     * For dual mapping, RX is already set up correctly
-     */
+    /* If single mapping (not dual), try to make it executable 
+            for dual mapping, RX is already set up correctly */
     if (!mapping->is_dual && !mapping->is_jit) {
         if (mprotect(mapping->rw_base, total_size, PROT_READ | PROT_EXEC) != 0) {
             DBG("mprotect to RX failed: %s\n", strerror(errno));
@@ -468,7 +459,6 @@ have_memory:
             
             if (new_base == MAP_FAILED || new_base != mapping->rw_base) {
                 DBG("Remap failed, execution may fail\n");
-                /* Continue anyway - might work on some systems */
             } else {
                 DBG("Remapped to RX successfully\n");
             }
@@ -516,7 +506,7 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
     DBG("Mapped: RW=%p, RX=%p (dual=%d, jit=%d)\n", 
            mapping->rw_base, mapping->rx_base, mapping->is_dual, mapping->is_jit);
     
-    /* Store both mappings - we'll use RX for execution */
+    /* We'll use RX for execution */
     image->base = mapping->rx_base;
     image->size = mapping->size;
     image->original_data = data;
@@ -541,9 +531,7 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
         return NULL;
     }
     
-    DBG("Header valid (magic=0x%x, ncmds=%u)\n", image->header->magic, image->header->ncmds);
-    
-    /* Calculate slide for relocation - use minimum vmaddr as base */
+    DBG("Header valid (magic=0x%x, ncmds=%u)\n", image->header->magic, image->header->ncmds);    
     struct mach_header_64 *original_header = (struct mach_header_64 *)data;
     
     /* Find minimum vmaddr across all segments (excluding PAGEZERO) */
@@ -580,10 +568,8 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
         return NULL;
     }
     
-    /* 
-     * Slide = where we actually loaded - where it was supposed to load
-     * This is consistent across all segments
-     */
+    /* Slide = where we actually loaded - where it was supposed to load 
+            This is consistent across all segments */
     uint64_t actual_base = (uint64_t)image->base;
     image->slide = actual_base - min_vmaddr;
     image->min_vmaddr = min_vmaddr;
@@ -597,10 +583,8 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
     arch_type = ARCH_ARM;
 #endif
     
-    /* 
-     * Scan relocations from the RX mapping (where code will execute)
-     * but use the original base address for calculating targets
-     */
+    /* Scan relocations from the RX mapping (where code will execute)
+     but use the original base address for calculating targets */
     reloc_table_t *relocs = reloc_scan(image->original_data, size, min_vmaddr, arch_type);
     if (!relocs) {
         DBG(" Failed to create relocation table\n");
@@ -623,9 +607,8 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
     if (image->slide != 0) {
         /* 
          * For dual-mapped memory, we need to:
-         * 1. Enable write on the RW mapping
-         * 2. Apply relocations to RW mapping
-         * 3. Changes automatically visible in RX mapping
+         * Enable write on the RW mapping and apply relocations to RW mapping
+         * Changes visible in RX mapping
          */
         uint8_t *target_code = NULL;
         if (image->is_dual_mapped) {
@@ -681,9 +664,9 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
             return NULL;
         }
         
-        DBG("Relocations applied successfully\n");
+        DBG("[+] Relocations done\n");
     } else {
-        DBG("No slide - internal relocations not needed\n");
+        DBG("[!] No slide\n");
     }
     
     /* Keep relocation table for potential future use */
