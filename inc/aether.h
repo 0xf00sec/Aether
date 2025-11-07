@@ -776,6 +776,15 @@ bool apply_arm64(uint8_t *code, size_t *size, size_t max_size,
 size_t expand_arm64(uint8_t *code, size_t size, size_t max_size,
                                  liveness_state_t *liveness, chacha_state_t *rng,
                                  unsigned expansion_intensity);
+size_t expand_chains_arm64(uint8_t *code, size_t size, size_t max_size,
+                                    liveness_state_t *liveness, chacha_state_t *rng,
+                                    unsigned chain_depth, unsigned expansion_intensity);
+size_t mov_immediates_arm64(uint8_t *code, size_t size, size_t max_size,
+                                     liveness_state_t *liveness, chacha_state_t *rng,
+                                     unsigned chain_depth);
+size_t expand_arithmetic_arm64(uint8_t *code, size_t size, size_t max_size,
+                                    liveness_state_t *liveness, chacha_state_t *rng,
+                                    unsigned chain_depth);
 #endif
 
 /* Mutation */
