@@ -1,6 +1,4 @@
 #include <aether.h>
-#include <sys/mman.h>
-#include <fcntl.h>
 
 static void f_buffer(unsigned char *buf, size_t len, wipe_pattern_t pattern, unsigned char custom) {
     switch (pattern) {
