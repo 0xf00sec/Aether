@@ -42,6 +42,7 @@ SRCS := $(SRC_DIR)/engine.c \
         $(SRC_DIR)/antidebug.c \
         $(SRC_DIR)/loader.c \
         $(SRC_DIR)/macho.c \
+        $(SRC_DIR)/relocate.c \
         $(SRC_DIR)/strings.c \
         $(SRC_DIR)/overnout.c \
         $(SRC_DIR)/morph.c \
