@@ -75,7 +75,7 @@ __attribute__((always_inline)) inline void chacha20_init(chacha_state_t *rng, co
 
     uint64_t counter;
     if (SecRandomCopyBytes(kSecRandomDefault, sizeof(counter), &counter) != 0) {
-        panic();
+        die();
     }
     rng->counter = counter;
 }
