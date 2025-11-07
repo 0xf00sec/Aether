@@ -10,8 +10,8 @@ static macho_builder_t* builder_init(size_t code_size) {
     if (!builder) return NULL;
     
     size_t header_size = sizeof(macho_header_t);
-    size_t code_offset = ALIGN_PAGE(header_size);
-    size_t aligned_code_size = ALIGN_PAGE(code_size);
+    size_t code_offset = ALIGN_P(header_size);
+    size_t aligned_code_size = ALIGN_P(code_size);
     size_t linkedit_offset = code_offset + aligned_code_size;
     size_t symtab_size = 1024;
     size_t strtab_size = 1024;
@@ -83,7 +83,7 @@ static void build_page0(macho_builder_t *builder) {
     hdr->pagezero_segment.cmd = LC_SEGMENT_64;
     hdr->pagezero_segment.cmdsize = sizeof(struct segment_command_64);
     hdr->pagezero_segment.vmaddr = 0;
-    hdr->pagezero_segment.vmsize = PAGE_SIZE_64;
+    hdr->pagezero_segment.vmsize = PS_64;
     hdr->pagezero_segment.fileoff = 0;
     hdr->pagezero_segment.filesize = 0;
     hdr->pagezero_segment.maxprot = 0;
@@ -97,10 +97,10 @@ static void build_page0(macho_builder_t *builder) {
 static void build_text(macho_builder_t *builder) {
     macho_header_t *hdr = (macho_header_t *)builder->buffer;
     
-    size_t text_vmaddr = PAGE_SIZE_64; 
+    size_t text_vmaddr = PS_64; 
     size_t text_fileoff = 0;
-    size_t code_fileoff = ALIGN_PAGE(builder->header_size); 
-    size_t text_filesize = code_fileoff + ALIGN_PAGE(builder->code_size);
+    size_t code_fileoff = ALIGN_P(builder->header_size); 
+    size_t text_filesize = code_fileoff + ALIGN_P(builder->code_size);
     
     builder->code_offset = code_fileoff; 
     strncpy(hdr->text_segment.segname, "__TEXT", 16);
@@ -148,7 +148,7 @@ static void build_linkedit(macho_builder_t *builder) {
     hdr->linkedit_segment.cmd = LC_SEGMENT_64;
     hdr->linkedit_segment.cmdsize = sizeof(struct segment_command_64);
     hdr->linkedit_segment.vmaddr = linkedit_vmaddr;
-    hdr->linkedit_segment.vmsize = ALIGN_PAGE(linkedit_size);
+    hdr->linkedit_segment.vmsize = ALIGN_P(linkedit_size);
     hdr->linkedit_segment.fileoff = linkedit_fileoff;
     hdr->linkedit_segment.filesize = linkedit_size;
     hdr->linkedit_segment.maxprot = VM_PROT_READ;
@@ -166,11 +166,11 @@ static void build_symtab(macho_builder_t *builder) {
     hdr->symtab_cmd.cmd = LC_SYMTAB;
     hdr->symtab_cmd.cmdsize = sizeof(struct symtab_command);
     hdr->symtab_cmd.symoff = builder->symtab_offset;
-    hdr->symtab_cmd.nsyms = 0;
+    hdr->symtab_cmd.nsyms = 0;  /* Will be populated if we copy symbols from original */
     hdr->symtab_cmd.stroff = builder->strtab_offset;
     hdr->symtab_cmd.strsize = builder->strtab_size;
     
-    DBG("Built LC_SYMTAB command\n");
+    DBG("Built LC_SYMTAB command (nsyms=%u)\n", hdr->symtab_cmd.nsyms);
 }
 
 static void build_dysymtab(macho_builder_t *builder) {
@@ -218,7 +218,7 @@ static void write_code(macho_builder_t *builder, const uint8_t *code, size_t cod
         DBG("Code size mismatch (%zu vs %zu)\n", code_size, builder->code_size);
     }
     
-    size_t aligned_size = ALIGN_PAGE(code_size); 
+    size_t aligned_size = ALIGN_P(code_size); 
     if (builder->code_offset + aligned_size > builder->capacity) {
         DBG("Code offset: 0x%zx, aligned: 0x%zx, required: 0x%zx, capacity: 0x%zx\n",
             builder->code_offset, aligned_size, builder->code_offset + aligned_size, builder->capacity);
@@ -281,13 +281,13 @@ static bool macho_stuff(macho_builder_t *builder) {
         return false;
     }
     
-    if (hdr->text_segment.fileoff % PAGE_SIZE_64 != 0) {
+    if (hdr->text_segment.fileoff % PS_64 != 0) {
         DBG("[!] __TEXT segment not page-aligned (0x%llx)\n",
             hdr->text_segment.fileoff);
         return false;
     }
     
-    if (hdr->linkedit_segment.fileoff % PAGE_SIZE_64 != 0) {
+    if (hdr->linkedit_segment.fileoff % PS_64 != 0) {
         DBG("[!] __LINKEDIT segment not page-aligned (0x%llx)\n",
             hdr->linkedit_segment.fileoff);
         return false;
@@ -371,7 +371,7 @@ uint8_t* wrap_macho(const uint8_t *code, size_t code_size, size_t *out_size) {
     *out_size = final_size;
     
     uint8_t *result = builder->buffer;
-    builder->buffer = NULL; // Prevent double-free
+    builder->buffer = NULL; 
     
     builder_free(builder);
     
