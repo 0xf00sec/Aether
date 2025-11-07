@@ -6,7 +6,7 @@ size_t crypt_payload(const int mode, const uint8_t *key, const uint8_t *iv,
                      const uint8_t *src, uint8_t *dst, const size_t size) {
     CCCryptorRef ctx = NULL;
     CCCryptorStatus status = CCCryptorCreate(mode ? kCCEncrypt : kCCDecrypt, kCCAlgorithmAES,
-                                             kCCOptionPKCS7Padding, key, KEY_SIZE, iv, &ctx);
+                                             kCCOptionPKCS7Padding, key, K_SZ, iv, &ctx);
     if (status != kCCSuccess || ctx == NULL) return 0;
 
     size_t max_out = size + kCCBlockSizeAES128;
