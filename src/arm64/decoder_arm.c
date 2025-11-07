@@ -1,6 +1,6 @@
 #include <aether.h>
 
-/* https:/*www.coranac.com/tonc/text/asm.htm */ */
+/* https:/*www.coranac.com/tonc/text/asm.htm */
 
 #if defined(ARCH_ARM)
 
