@@ -65,7 +65,7 @@ __attribute__((always_inline)) inline void chacha20_init(chacha_state_t *rng, co
     uint8_t hash[CC_SHA256_DIGEST_LENGTH];
 
     CC_SHA256(seed, (CC_LONG)len, hash);
-    memcpy(rng->key, hash, KEY_SIZE);
+    memcpy(rng->key, hash, K_SZ);
 
     uint8_t ivh[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(hash, CC_SHA256_DIGEST_LENGTH, ivh);
