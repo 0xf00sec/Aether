@@ -707,7 +707,6 @@ static inline bool branch_if(const x86_inst_t *inst) {
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64)
-/* Build control flow graph for ARM64 identifies basic blocks and successors */
 static bool sketch_flow_arm64(uint8_t *code, size_t size, flowmap *cfg) {
     if (!code || !cfg || size < 4 || (size % 4) != 0) {
         if (cfg) *cfg = (flowmap){0};
@@ -788,11 +787,9 @@ static bool sketch_flow_arm64(uint8_t *code, size_t size, flowmap *cfg) {
         cfg->num_blocks++;
     }
     
-    /* Build successor relationships */
     for (size_t bi = 0; bi < cfg->num_blocks; bi++) {
         blocknode *block = &cfg->blocks[bi];
         
-        /*  Find last instruction in block */
         if (block->end <= block->start || block->end > size) continue;
         
         size_t last_insn_offset = block->end - 4;
@@ -800,7 +797,7 @@ static bool sketch_flow_arm64(uint8_t *code, size_t size, flowmap *cfg) {
         
         arm64_inst_t inst;
         if (!decode_arm64(code + last_insn_offset, &inst) || !inst.valid) {
-            /*  If we can't decode last instruction, assume fall-through */
+            /* Assume fall-through */
             if (bi + 1 < cfg->num_blocks && block->num_successors < 4) {
                 block->successors[block->num_successors++] = bi + 1;
             }
@@ -851,7 +848,6 @@ static bool sketch_flow_arm64(uint8_t *code, size_t size, flowmap *cfg) {
             }
         }
         else if (inst.type == ARM_OP_BR || inst.type == ARM_OP_BLR) {
-            /* Indirect branches can't determine target statically */
             if (inst.type == ARM_OP_BR) {
                 block->is_exit = true;
             } else {
@@ -1103,12 +1099,304 @@ bool sketch_flow(uint8_t *code, size_t size, flowmap *cfg) {
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64)
-/* Flatten control flow for ARM64 currently just shuffles blocks */
 static void flatline_flow_arm64(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng) {
     if (!code || !cfg || !rng || cfg->num_blocks < 3) return;
     if ((size % 4) != 0) return;
+    if (!cfg->blocks || cfg->num_blocks == 0) return;
     
-    shuffle_blocks_arm64(code, size, rng);
+    size_t max_blocks = cfg->num_blocks;
+    
+    if (max_blocks > 0 && max_blocks > (SIZE_MAX - 128 - size) / 8) {
+        return;
+    }
+    
+    size_t buf_sz = size + 128 + max_blocks * 8;
+    uint8_t *nbuf = malloc(buf_sz);
+    if (!nbuf) return;
+    
+    size_t *bmap = malloc(max_blocks * sizeof(size_t));
+    if (!bmap) { free(nbuf); return; }
+    
+    size_t *order = malloc(max_blocks * sizeof(size_t));
+    if (!order) { free(nbuf); free(bmap); return; }
+    
+    for (size_t i = 0; i < max_blocks; i++) {
+        order[i] = i;
+    }
+    
+    /* Fisher-Yates */
+    for (size_t i = max_blocks - 1; i > 0; i--) {
+        size_t j = 1 + (chacha20_random(rng) % i); /* Keep block 0 pinned */
+        size_t t = order[i];
+        order[i] = order[j];
+        order[j] = t;
+    }
+    
+    if (order[0] != 0) {
+        size_t idx0 = 0;
+        for (size_t k = 1; k < max_blocks; k++) {
+            if (order[k] == 0) {
+                idx0 = k;
+                break;
+            }
+        }
+        size_t t = order[0];
+        order[0] = order[idx0];
+        order[idx0] = t;
+    }
+    
+    arm64_patch_t patches[128];  /* Max 128 patches */
+    size_t np = 0;
+    size_t out = 0;
+    
+    for (size_t i = 0; i < max_blocks; i++) {
+        size_t bi = order[i];
+        blocknode *b = &cfg->blocks[bi];
+        bmap[bi] = out;
+        size_t blen = b->end - b->start;
+        
+        if (out + blen > buf_sz) break;
+        memcpy(nbuf + out, code + b->start, blen);
+        
+        size_t block_offset = 0;
+        while (block_offset + 4 <= blen && np < (sizeof(patches) / sizeof(patches[0]))) {
+            size_t instruction_addr_in_new_buffer = out + block_offset;
+            size_t instruction_addr_in_og = b->start + block_offset;
+            
+            arm64_inst_t inst;
+            if (!decode_arm64(nbuf + instruction_addr_in_new_buffer, &inst) || !inst.valid) {
+                block_offset += 4;
+                continue;
+            }
+            
+            if (!inst.is_control_flow) {
+                block_offset += 4;
+                continue;
+            }
+            
+            /* Calculate absolute target */
+            int64_t current_absolute_target = (int64_t)instruction_addr_in_og + inst.target;
+            bool should_patch = false;
+            int patch_type = 0;
+            bool is_call = false;
+            uint8_t condition = 0;
+            uint8_t bit_pos = 0;
+            
+            if (inst.type == ARM_OP_BRANCH || inst.type == ARM_OP_BRANCH_LINK) {
+                should_patch = true;
+                patch_type = ARM64_PATCH_B_BL;
+                is_call = (inst.type == ARM_OP_BRANCH_LINK);
+            } else if (inst.type == ARM_OP_BRANCH_COND) {
+                should_patch = true;
+                patch_type = ARM64_PATCH_B_COND;
+                condition = (uint8_t)inst.condition;
+            } else if (inst.type == ARM_OP_CBZ || inst.type == ARM_OP_CBNZ) {
+                should_patch = true;
+                patch_type = ARM64_PATCH_CBZ;
+            } else if (inst.type == ARM_OP_TBZ || inst.type == ARM_OP_TBNZ) {
+                should_patch = true;
+                patch_type = ARM64_PATCH_TBZ;
+                bit_pos = (uint8_t)inst.imm;  /* Bit position stored in imm field */
+            } else if (inst.type == ARM_OP_BR || inst.type == ARM_OP_BLR) {
+
+                should_patch = true;
+                patch_type = ARM64_PATCH_BR;
+                is_call = (inst.type == ARM_OP_BLR);
+            }
+            
+            if (should_patch) {
+                patches[np].off = instruction_addr_in_new_buffer;
+                patches[np].blki = bi;
+                patches[np].abs_target = (uint64_t)current_absolute_target;
+                patches[np].inst_len = 4;
+                patches[np].typ = patch_type;
+                patches[np].is_call = is_call;
+                patches[np].condition = condition;
+                patches[np].bit_pos = bit_pos;
+                patches[np].raw_insn = inst.raw;
+                np++;
+            }
+            
+            block_offset += 4;
+        }
+        
+        out += blen;
+    }
+    
+    if (np > 1) {
+        for (size_t i = 0; i < np - 1; i++) {
+            for (size_t j = i + 1; j < np; j++) {
+                if (patches[i].off < patches[j].off) {
+                    arm64_patch_t t = patches[i];
+                    patches[i] = patches[j];
+                    patches[j] = t;
+                }
+            }
+        }
+    }
+    
+    /* Apply patches */
+    size_t tramp_base = out;
+    size_t tramp_off = tramp_base;
+    
+    for (size_t i = 0; i < np; i++) {
+        arm64_patch_t *p = &patches[i];
+        size_t src = p->off;
+        
+        if (src >= buf_sz) continue;
+        
+        /* Find target block */
+        size_t tgt_blk = (size_t)-1;
+        for (size_t k = 0; k < max_blocks; k++) {
+            if (p->abs_target >= cfg->blocks[k].start && 
+                p->abs_target < cfg->blocks[k].end) {
+                tgt_blk = k;
+                break;
+            }
+        }
+        
+        if (p->typ == ARM64_PATCH_BR) {
+            continue;  /* Just tracked, no patching */
+        }
+        
+        if (tgt_blk == (size_t)-1) {
+            /* Use trampoline */
+            size_t tramp_start = tramp_off;
+            emit_trampoline_arm64(nbuf, &tramp_off, p->abs_target, p->is_call);
+            int64_t disp_to_tramp = (int64_t)tramp_start - (int64_t)(src + 4);
+            
+            if ((disp_to_tramp % 4) == 0 && p->typ == ARM64_PATCH_B_BL) {
+                uint32_t new_insn = p->raw_insn & 0xFC000000;
+                uint32_t imm26 = ((disp_to_tramp / 4) & 0x3FFFFFF);
+                new_insn |= imm26;
+                *(uint32_t*)(nbuf + src) = new_insn;
+            }
+            continue;
+        }
+        
+        size_t new_tgt = bmap[tgt_blk];
+        int64_t new_disp = (int64_t)new_tgt - (int64_t)(src + 4);
+        
+        bool fixed = false;
+        
+        switch (p->typ) {
+            case ARM64_PATCH_B_BL: { 
+                int64_t max_range = (1LL << 27); 
+                if (new_disp >= -max_range && new_disp < max_range && (new_disp % 4) == 0) {
+                    uint32_t new_insn = p->raw_insn & 0xFC000000;
+                    uint32_t imm26 = ((new_disp / 4) & 0x3FFFFFF);
+                    new_insn |= imm26;
+                    *(uint32_t*)(nbuf + src) = new_insn;
+                    fixed = true;
+                } else {
+                    size_t tramp_start = tramp_off;
+                    emit_trampoline_arm64(nbuf, &tramp_off, p->abs_target, p->is_call);
+                    int64_t disp_to_tramp = (int64_t)tramp_start - (int64_t)(src + 4);
+                    if ((disp_to_tramp % 4) == 0) {
+                        uint32_t new_insn = p->raw_insn & 0xFC000000;
+                        uint32_t imm26 = ((disp_to_tramp / 4) & 0x3FFFFFF);
+                        new_insn |= imm26;
+                        *(uint32_t*)(nbuf + src) = new_insn;
+                        fixed = true;
+                    }
+                }
+                break;
+            }
+            
+            case ARM64_PATCH_B_COND: { 
+                int64_t max_range = (1LL << 20);  
+                if (new_disp >= -max_range && new_disp < max_range && (new_disp % 4) == 0) {
+                    uint32_t new_insn = p->raw_insn & 0xFF00001F; 
+                    uint32_t imm19 = ((new_disp / 4) & 0x7FFFF) << 5;
+                    new_insn |= imm19;
+                    *(uint32_t*)(nbuf + src) = new_insn;
+                    fixed = true;
+                } else {
+                    size_t tramp_start = tramp_off;
+                    emit_trampoline_arm64(nbuf, &tramp_off, p->abs_target, false);
+                    int64_t disp_to_tramp = (int64_t)tramp_start - (int64_t)(src + 4);
+                    if ((disp_to_tramp % 4) == 0) {
+                        uint32_t new_insn = 0x14000000;  /* B base */
+                        uint32_t imm26 = ((disp_to_tramp / 4) & 0x3FFFFFF);
+                        new_insn |= imm26;
+                        *(uint32_t*)(nbuf + src) = new_insn;
+                        fixed = true;
+                    }
+                }
+                break;
+            }
+            
+            case ARM64_PATCH_CBZ: { 
+                int64_t max_range = (1LL << 20);
+                if (new_disp >= -max_range && new_disp < max_range && (new_disp % 4) == 0) {
+                    uint32_t new_insn = p->raw_insn & 0xFF00001F;  /* Preserve opcode and rt */
+                    uint32_t imm19 = ((new_disp / 4) & 0x7FFFF) << 5;
+                    new_insn |= imm19;
+                    *(uint32_t*)(nbuf + src) = new_insn;
+                    fixed = true;
+                } else {
+                    /* For now */
+                }
+                break;
+            }
+            
+            case ARM64_PATCH_TBZ: {  
+                int64_t max_range = (1LL << 15); 
+                if (new_disp >= -max_range && new_disp < max_range && (new_disp % 4) == 0) {
+                    uint32_t new_insn = p->raw_insn & 0xFFF8001F; 
+                    uint32_t imm14 = ((new_disp / 4) & 0x3FFF) << 5;
+                    new_insn |= imm14;
+                    *(uint32_t*)(nbuf + src) = new_insn;
+                    fixed = true;
+                } else {
+                }
+                break;
+            }
+        }
+        
+        if (fixed && src < buf_sz) {
+            arm64_inst_t verify;
+            if (!decode_arm64(nbuf + src, &verify) || !verify.valid || verify.ring0) {
+                /* Rollback */
+                *(uint32_t*)(nbuf + src) = p->raw_insn;
+            }
+        }
+    }
+    
+    bool all_valid = true;
+    for (size_t i = 0; i < np; i++) {
+        arm64_patch_t *p = &patches[i];
+        if (p->off >= buf_sz) {
+            all_valid = false;
+            break;
+        }
+        
+        if (p->typ == ARM64_PATCH_BR) continue;  /* Skip indirect branches */
+        
+        arm64_inst_t inst;
+        size_t remaining = buf_sz - p->off;
+        if (remaining < 4) {
+            all_valid = false;
+            break;
+        }
+        
+        if (!decode_arm64(nbuf + p->off, &inst) || !inst.valid || inst.ring0) {
+            all_valid = false;
+            break;
+        }
+    }
+    
+    size_t final_size = tramp_off > out ? tramp_off : out;
+    if (all_valid && final_size <= size) {
+        memcpy(code, nbuf, final_size);
+        if (final_size < size) {
+            memset(code + final_size, 0, size - final_size);
+        }
+    }
+    
+    free(nbuf);
+    free(bmap);
+    free(order);
 }
 #endif
 
@@ -1833,19 +2121,143 @@ static void win_reorder(uint8_t *code, size_t size, x86_inst_t *win,
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64)
+
 /* Apply ARM64-specific mutations register substitution, equivalences, expansions */
+static inline bool is_control_flow_arm64(const arm64_inst_t *i) {
+    if (!i) return false;
+    return i->is_control_flow || i->type == ARM_OP_BRANCH || 
+           i->type == ARM_OP_BRANCH_LINK || i->type == ARM_OP_BRANCH_COND ||
+           i->type == ARM_OP_RET || i->type == ARM_OP_BR || i->type == ARM_OP_BLR ||
+           i->type == ARM_OP_CBZ || i->type == ARM_OP_CBNZ ||
+           i->type == ARM_OP_TBZ || i->type == ARM_OP_TBNZ;
+}
+
+static inline uint32_t inst_reg_mask_arm64(const arm64_inst_t *i) {
+    if (!i) return 0;
+    uint32_t m = 0;
+    if (i->rd < 32) m |= (1u << i->rd);
+    if (i->rn < 32) m |= (1u << i->rn);
+    if (i->rm < 32) m |= (1u << i->rm);
+    if (i->ra < 32) m |= (1u << i->ra);
+    return m;
+}
+
+static inline bool has_memory_access_arm64(const arm64_inst_t *i) {
+    if (!i) return false;
+    return i->type == ARM_OP_LDR || i->type == ARM_OP_STR ||
+           i->type == ARM_OP_LDP || i->type == ARM_OP_STP;
+}
+
+/* Can be reordered here */
+static inline bool independent_inst_arm64(const arm64_inst_t *a, const arm64_inst_t *b) {
+    if (!a || !b) return false;
+    if (is_control_flow_arm64(a) || is_control_flow_arm64(b)) return false;
+    
+    /* Check register dependencies */
+    uint32_t ma = inst_reg_mask_arm64(a);
+    uint32_t mb = inst_reg_mask_arm64(b);
+    
+    /* Check if any register written by A is read/written by B */
+    if (a->rd < 32 && (mb & (1u << a->rd))) return false;
+    if (b->rd < 32 && (ma & (1u << b->rd))) return false;
+    
+    /* If both access memory, assume dependent */
+    if (has_memory_access_arm64(a) && has_memory_access_arm64(b)) return false;
+    
+    /* If one writes memory and other reads/writes memory, assume dependent */
+    if ((a->type == ARM_OP_STR || a->type == ARM_OP_STP) && 
+        has_memory_access_arm64(b)) return false;
+    if ((b->type == ARM_OP_STR || b->type == ARM_OP_STP) && 
+        has_memory_access_arm64(a)) return false;
+    
+    return true;
+}
+
+/* Build instruction window for ARM64 */
+static int build_instr_win_arm64(uint8_t *code, size_t size, size_t offset,
+                                  arm64_inst_t *win, size_t *win_offs, int max_window) {
+    if (!code || !win || !win_offs) return 0;
+    
+    int win_cnt = 0;
+    size_t scan = offset;
+    
+    while (scan + 4 <= size && win_cnt < max_window) {
+        arm64_inst_t inst;
+        if (!decode_arm64(code + scan, &inst) || !inst.valid) {
+            scan += 4;
+            continue;
+        }
+        win[win_cnt] = inst;
+        win_offs[win_cnt] = scan;
+        win_cnt++;
+        scan += 4;
+        if (is_control_flow_arm64(&inst)) break;
+    }
+    return win_cnt;
+}
+
+static void win_reorder_arm64(uint8_t *code, size_t size, arm64_inst_t *win,
+                               size_t *win_offs, int win_cnt, chacha_state_t *rng,
+                               unsigned mutation_intensity, muttt_t *log, unsigned gen) {
+    if (!code || !win || !win_offs || !rng) return;
+    
+    for (int i = 0; i + 1 < win_cnt; ++i) {
+        size_t a_off = win_offs[i];
+        size_t a_len = 4;  /* All ARM64 instructions are 4 bytes */
+        size_t b_off = win_offs[i+1];
+        size_t b_len = 4;
+        
+        if (b_off != a_off + a_len) {
+            continue;
+        }
+        
+        if (independent_inst_arm64(&win[i], &win[i+1])) {
+            if ((chacha20_random(rng) % 10) < (mutation_intensity / 2 + 1)) {
+                if (swap_adjacent_ranges(code, size, a_off, a_len, b_len)) {
+                    win_offs[i] = a_off;
+                    win_offs[i+1] = a_off + b_len;
+                    if (log) drop_mut(log, a_off, 8, MUT_REORDER, gen, "arm64 win reorder");
+                }
+            }
+        }
+    }
+}
+
 void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                     muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity,
                     const engine_context_t *ectx) {
     if (!code || !rng || size < 4) return;
     
     size_t offset = 0;
-    size_t changes = 0;
-    size_t max_changes = (size / 4) / 10 + 1;
+    size_t view_size = size;
     
     if (liveness) boot_live(liveness);
     
-    while (offset + 4 <= size && changes < max_changes) {
+    if (gen >= 5 && (chacha20_random(rng) % 10) < (gen > 10 ? 6 : 3)) {
+        unsigned chain_depth = 1 + (gen / 10);
+        if (chain_depth > 3) chain_depth = 3;  
+        
+        size_t new_size = expand_chains_arm64(code, view_size, view_size * 2, liveness, rng,
+                                               chain_depth, mutation_intensity * 2);
+        if (new_size > view_size && new_size <= view_size * 2) {
+            if (log) drop_mut(log, 0, new_size, MUT_EXPAND, gen, "arm64 chain expand");
+            view_size = new_size; 
+        }
+    }
+    
+    size_t changes = 0;
+    size_t max_changes = (view_size / 4) / 10 + 1;
+    
+    while (offset + 4 <= view_size && changes < max_changes) {
+        const int WINDOW_MAX = 8;
+        arm64_inst_t win[WINDOW_MAX];
+        size_t win_offs[WINDOW_MAX];
+        
+        int win_cnt = build_instr_win_arm64(code, view_size, offset, win, win_offs, WINDOW_MAX);
+        
+        win_reorder_arm64(code, view_size, win, win_offs, win_cnt, rng,
+                          mutation_intensity, log, gen);
+        
         arm64_inst_t inst;
         if (!decode_arm64(code + offset, &inst) || !inst.valid) {
             offset += 4;
@@ -1863,16 +2275,28 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
         bool mutated = false;
         uint32_t backup = inst.raw;
         
+        /* Instruction expansion */
         if (!mutated && gen >= 3 && (chacha20_random(rng) % 100) < (mutation_intensity * 5)) {
-            size_t temp_size = size;
-            if (apply_arm64(code, &temp_size, size * 2, offset, &inst, liveness, rng)) {
-                size_t expansion_len = temp_size - size;
-                size = temp_size;
+            size_t temp_size = view_size;
+            if (apply_arm64(code, &temp_size, view_size * 2, offset, &inst, liveness, rng)) {
+                size_t expansion_len = temp_size - view_size;
+                view_size = temp_size;
                 mutated = true;
                 changes++;
                 if (log) drop_mut(log, offset, expansion_len + 4, MUT_EXPAND, gen, "arm64 expand");
                 
-                offset += expansion_len + 4;
+                /* Re-decode to get new length */
+                arm64_inst_t new_inst;
+                size_t expanded_len = 0;
+                for (size_t i = offset; i < view_size && i < offset + 16; i += 4) {
+                    if (decode_arm64(code + i, &new_inst) && new_inst.valid) {
+                        expanded_len += 4;
+                    } else {
+                        break;
+                    }
+                    if (expanded_len >= 12) break;
+                }
+                offset += expanded_len;
                 continue;
             }
         }
@@ -1925,7 +2349,6 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
         
         /* MOV equivalents */
         if (!mutated && inst.type == ARM_OP_MOV && (chacha20_random(rng) % 100) < (mutation_intensity * 8)) {
-            /* MOV Xd, Xm > ORR Xd, XZR, Xm */
             if (inst.rd < 29 && inst.rm < 29) {
                 uint32_t new_insn = 0xAA0003E0;  /* ORR base encoding */
                 new_insn |= (inst.is_64bit ? (1u << 31) : 0);
@@ -2023,16 +2446,266 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
             if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "cmp->cmn");
         }
         
+        /* MOV immediate splitting */
+        if (!mutated && inst.type == ARM_OP_MOV && inst.imm != 0 && 
+            (chacha20_random(rng) % 100) < (mutation_intensity * 4)) {
+            uint64_t imm = inst.imm;
+            if (imm <= 0xFFFFFFFF && inst.rd < 29) {
+                switch (chacha20_random(rng) % 5) {
+                    case 0: {  /* MOV + ADD: imm = base + delta */
+                        uint32_t base = (uint32_t)imm / 2;
+                        uint32_t delta = (uint32_t)imm - base;
+                        if (offset + 8 <= view_size) {
+                            /* MOVZ Xd, #base */
+                            uint32_t insn1 = 0xD2800000;
+                            insn1 |= (inst.is_64bit ? (1u << 31) : 0);
+                            insn1 |= inst.rd;
+                            insn1 |= ((base & 0xFFFF) << 5);
+                            *(uint32_t*)(code + offset) = insn1;
+                            
+                            /* ADD Xd, Xd, #delta */
+                            uint32_t insn2 = 0x91000000;
+                            insn2 |= (inst.is_64bit ? (1u << 31) : 0);
+                            insn2 |= inst.rd;
+                            insn2 |= (inst.rd << 5);
+                            insn2 |= ((delta & 0xFFF) << 10);
+                            *(uint32_t*)(code + offset + 4) = insn2;
+                            mutated = true;
+                        }
+                        break;
+                    }
+                    case 1: { 
+                        if (imm > 100 && imm < 0x7FFFFFFF) {
+                            uint32_t large = (uint32_t)imm + 100;
+                            uint32_t small = 100;
+                            if (offset + 8 <= view_size) {
+                                /* MOVZ Xd, #large */
+                                uint32_t insn1 = 0xD2800000;
+                                insn1 |= (inst.is_64bit ? (1u << 31) : 0);
+                                insn1 |= inst.rd;
+                                insn1 |= ((large & 0xFFFF) << 5);
+                                *(uint32_t*)(code + offset) = insn1;
+                                
+                                /* SUB Xd, Xd, #small */
+                                uint32_t insn2 = 0xD1000000;
+                                insn2 |= (inst.is_64bit ? (1u << 31) : 0);
+                                insn2 |= inst.rd;
+                                insn2 |= (inst.rd << 5);
+                                insn2 |= ((small & 0xFFF) << 10);
+                                *(uint32_t*)(code + offset + 4) = insn2;
+                                mutated = true;
+                            }
+                        }
+                        break;
+                    }
+                    case 2: {  /* MOV + EOR: imm = (imm^key)^key using temp register */
+                        uint32_t key = chacha20_random(rng) & 0xFFFF;
+                        uint8_t temp_reg = 16;  /* Use X16 (IP0) as temp if available */
+                        if (inst.rd != 16 && offset + 12 <= view_size) {
+                            /* MOVZ Xtmp, #key */
+                            uint32_t insn1 = 0xD2800000;
+                            insn1 |= (inst.is_64bit ? (1u << 31) : 0);
+                            insn1 |= temp_reg;
+                            insn1 |= ((key & 0xFFFF) << 5);
+                            *(uint32_t*)(code + offset) = insn1;
+                            
+                            /* MOVZ Xd, #(imm^key) */
+                            uint32_t insn2 = 0xD2800000;
+                            insn2 |= (inst.is_64bit ? (1u << 31) : 0);
+                            insn2 |= inst.rd;
+                            insn2 |= ((((uint32_t)imm ^ key) & 0xFFFF) << 5);
+                            *(uint32_t*)(code + offset + 4) = insn2;
+                            
+                            /* EOR Xd, Xd, Xtmp */
+                            uint32_t insn3 = 0xCA000000;
+                            insn3 |= (inst.is_64bit ? (1u << 31) : 0);
+                            insn3 |= inst.rd;
+                            insn3 |= (inst.rd << 5);
+                            insn3 |= (temp_reg << 16);
+                            *(uint32_t*)(code + offset + 8) = insn3;
+                            mutated = true;
+                        }
+                        break;
+                    }
+                    case 3: {  /* MOV + LSL + ADD: imm = (part1 << shift) + part2 */
+                        if (imm > 16) {
+                            uint8_t shift = 1 + (chacha20_random(rng) % 3);
+                            uint32_t part1 = (uint32_t)imm >> shift;
+                            uint32_t part2 = (uint32_t)imm - (part1 << shift);
+                            if (offset + 12 <= view_size && part1 <= 0xFFFF) {
+                                /* MOVZ Xd, #part1 */
+                                uint32_t insn1 = 0xD2800000;
+                                insn1 |= (inst.is_64bit ? (1u << 31) : 0);
+                                insn1 |= inst.rd;
+                                insn1 |= ((part1 & 0xFFFF) << 5);
+                                *(uint32_t*)(code + offset) = insn1;
+                                
+                                /* LSL Xd, Xd, #shift */
+                                uint32_t insn2 = 0xD3400000;
+                                insn2 |= (inst.is_64bit ? (1u << 31) : 0);
+                                insn2 |= inst.rd;
+                                insn2 |= (inst.rd << 5);
+                                insn2 |= ((shift & 0x3F) << 10);
+                                *(uint32_t*)(code + offset + 4) = insn2;
+                                
+                                /* ADD Xd, Xd, #part2 */
+                                uint32_t insn3 = 0x91000000;
+                                insn3 |= (inst.is_64bit ? (1u << 31) : 0);
+                                insn3 |= inst.rd;
+                                insn3 |= (inst.rd << 5);
+                                insn3 |= ((part2 & 0xFFF) << 10);
+                                *(uint32_t*)(code + offset + 8) = insn3;
+                                mutated = true;
+                            }
+                        }
+                        break;
+                    }
+                    case 4: {  /* MOV + NEG: imm = -(-imm) */
+                        if (imm <= 0x7FFFFFFF && imm > 0) {
+                            uint32_t neg_imm = (uint32_t)(-((int32_t)imm));
+                            if (offset + 8 <= view_size && neg_imm <= 0xFFFF) {
+                                /* MOVZ Xd, #(-imm) */
+                                uint32_t insn1 = 0xD2800000;
+                                insn1 |= (inst.is_64bit ? (1u << 31) : 0);
+                                insn1 |= inst.rd;
+                                insn1 |= ((neg_imm & 0xFFFF) << 5);
+                                *(uint32_t*)(code + offset) = insn1;
+                                
+                                /* NEG Xd, Xd */
+                                uint32_t insn2 = 0xCB000000;
+                                insn2 |= (inst.is_64bit ? (1u << 31) : 0);
+                                insn2 |= inst.rd;
+                                insn2 |= (31 << 5);  /* XZR */
+                                insn2 |= (inst.rd << 16);
+                                *(uint32_t*)(code + offset + 4) = insn2;
+                                mutated = true;
+                            }
+                        }
+                        break;
+                    }
+                }
+                
+                if (mutated) {
+                    changes++;
+                    size_t split_len = 0;
+                    for (size_t i = offset; i < view_size && i < offset + 16; i += 4) {
+                        arm64_inst_t check;
+                        if (decode_arm64(code + i, &check) && check.valid) {
+                            split_len += 4;
+                        } else {
+                            break;
+                        }
+                    }
+                    if (log && split_len >= 4) {
+                        drop_mut(log, offset, split_len, MUT_EXPAND, gen, "arm64 mov split");
+                    }
+                }
+            }
+        }
+        
+        if (!mutated && inst.type == ARM_OP_MOV && inst.rm < 29 && 
+            (chacha20_random(rng) % 100) < (mutation_intensity * 6)) {
+            switch (chacha20_random(rng) % 3) {
+                case 0: {  /* MOV > ADD with zero */
+                    uint32_t new_insn = 0x8B0003E0;
+                    new_insn |= (inst.is_64bit ? (1u << 31) : 0);
+                    new_insn |= inst.rd;
+                    new_insn |= (inst.rm << 16);
+                    new_insn |= (31 << 5);  /* XZR */
+                    *(uint32_t*)(code + offset) = new_insn;
+                    mutated = true;
+                    break;
+                }
+                case 1: {  /* MOV > EOR with zero */
+                    uint32_t new_insn = 0xCA0003E0;
+                    new_insn |= (inst.is_64bit ? (1u << 31) : 0);
+                    new_insn |= inst.rd;
+                    new_insn |= (inst.rm << 16);
+                    new_insn |= (31 << 5);  /* XZR */
+                    *(uint32_t*)(code + offset) = new_insn;
+                    mutated = true;
+                    break;
+                }
+                case 2: {  /* MOV > ORR with zero (already handled above) */
+                    break;
+                }
+            }
+            if (mutated) {
+                changes++;
+                if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "arm64 mov equiv");
+            }
+        }
+        
+        /* Junk/opaque predicate insertion */
+        if (!mutated && (chacha20_random(rng) % 10) < (mutation_intensity / 2)) {
+            bool cool_to_insert = true;
+            if (liveness) {
+                /* Check if we have free reg */
+                const uint8_t opaque_regs[] = {0, 1, 2, 6, 7, 8, 9, 10};
+                for (size_t i = 0; i < sizeof(opaque_regs); i++) {
+                    if (liveness->regs[opaque_regs[i]].iz_live) {
+                        cool_to_insert = false;
+                        break;
+                    }
+                }
+            }
+            
+            if (cool_to_insert && offset + 8 <= view_size) {
+                uint8_t junk_buf[4];
+                size_t junk_len;
+                spew_trash(junk_buf, &junk_len, rng);
+                
+                if (junk_len == 4) {
+                    size_t move_len = view_size - offset - 4;
+                    if (offset + 4 <= view_size && move_len <= view_size &&
+                        offset + 4 + move_len <= view_size) {
+                        memmove(code + offset + 4, code + offset, move_len);
+                        memcpy(code + offset, junk_buf, 4);
+                        view_size += 4;
+                        mutated = true;
+                        changes++;
+                        if (log) drop_mut(log, offset, 4, MUT_JUNK, gen, "arm64 junk");
+                        offset += 4;
+                        continue;
+                    }
+                }
+            }
+        }
+        
         /* NOP Insertion (if space allows) */
         if (!mutated && (chacha20_random(rng) % 100) < (mutation_intensity * 3)) {
-            /* Insert NOP before current instruction  */
-            /* For now, replace current instruction with NOP if it's cool */
             if (inst.type == ARM_OP_NOP || 
                 (inst.type == ARM_OP_MOV && inst.rd == inst.rm)) {
                 *(uint32_t*)(code + offset) = 0xD503201F;  /*  NOP */
                 mutated = true;
                 changes++;
                 if (log) drop_mut(log, offset, 4, MUT_JUNK, gen, "nop");
+            }
+        }
+        
+        /* More arithmetic equivalences */
+        if (!mutated && inst.type == ARM_OP_ADD && inst.rm < 29 && inst.rn < 29 &&
+            (chacha20_random(rng) % 100) < (mutation_intensity * 4)) {
+            /* ADD Xd, Xn, Xm > ORR Xd, Xn, XZR; ADD Xd, Xd, Xm (chain) */
+            if (offset + 8 <= view_size) {
+                /* ORR Xd, Xn, XZR (MOV Xd, Xn) */
+                uint32_t insn1 = 0xAA0003E0;
+                insn1 |= (inst.is_64bit ? (1u << 31) : 0);
+                insn1 |= inst.rd;
+                insn1 |= (inst.rn << 16);
+                insn1 |= (31 << 5);
+                *(uint32_t*)(code + offset) = insn1;
+                
+                /* ADD Xd, Xd, Xm */
+                uint32_t insn2 = 0x8B000000;
+                insn2 |= (inst.is_64bit ? (1u << 31) : 0);
+                insn2 |= inst.rd;
+                insn2 |= (inst.rd << 5);
+                insn2 |= (inst.rm << 16);
+                *(uint32_t*)(code + offset + 4) = insn2;
+                mutated = true;
+                changes++;
+                if (log) drop_mut(log, offset, 8, MUT_EQUIV, gen, "arm64 add chain");
             }
         }
         
@@ -2043,6 +2716,7 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                 /* Rollback */
                 *(uint32_t*)(code + offset) = backup;
                 changes--;
+                mutated = false;
             }
         }
         
