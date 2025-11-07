@@ -862,7 +862,7 @@ bool apply_expansion(uint8_t *code, size_t *size, size_t offset,
     return true;
 }
 
-size_t expand_code_section(uint8_t *code, size_t size, size_t max_size,
+size_t expand_code(uint8_t *code, size_t size, size_t max_size,
                             liveness_state_t *liveness, chacha_state_t *rng,
                             unsigned expansion_intensity) {
     if (!code || size == 0 || !rng) return size;
@@ -897,7 +897,7 @@ size_t expand_code_section(uint8_t *code, size_t size, size_t max_size,
 }
 
 /* 3xpand, then expand the expanded code again */
-size_t expand_with_chains(uint8_t *code, size_t size, size_t max_size,
+size_t expand_chains(uint8_t *code, size_t size, size_t max_size,
                           liveness_state_t *liveness, chacha_state_t *rng,
                           unsigned chain_depth, unsigned expansion_intensity) {
     if (!code || size == 0 || !rng || chain_depth == 0) return size;
@@ -997,7 +997,7 @@ size_t mov_immediates(uint8_t *code, size_t size, size_t max_size,
 }
 
 /* Chain expand arithmetic instructions (ADD, SUB, INC, DEC) */
-size_t chain_expand_arithmetic(uint8_t *code, size_t size, size_t max_size,
+size_t expand_arithmetic(uint8_t *code, size_t size, size_t max_size,
                                liveness_state_t *liveness, chacha_state_t *rng,
                                unsigned chain_depth) {
     if (!code || size == 0 || !rng || chain_depth == 0) return size;
