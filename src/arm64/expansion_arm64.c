@@ -358,7 +358,7 @@ static arm64_expansion_t arm64_inst(const arm64_inst_t *inst,
 }
 
 /* Apply expansion to code buffer */
-bool apply_arm64_expansion(uint8_t *code, size_t *size, size_t max_size,
+bool apply_arm64(uint8_t *code, size_t *size, size_t max_size,
                            size_t offset, const arm64_inst_t *inst,
                            liveness_state_t *liveness, chacha_state_t *rng) {
     if (!code || !size || !inst || !rng) return false;
@@ -415,7 +415,7 @@ bool apply_arm64_expansion(uint8_t *code, size_t *size, size_t max_size,
     return true;
 }
 
-size_t expand_arm64_code_section(uint8_t *code, size_t size, size_t max_size,
+size_t expand_arm64(uint8_t *code, size_t size, size_t max_size,
                                  liveness_state_t *liveness, chacha_state_t *rng,
                                  unsigned expansion_intensity) {
     if (!code || size == 0 || !rng || (size % 4) != 0) return size;
@@ -432,7 +432,7 @@ size_t expand_arm64_code_section(uint8_t *code, size_t size, size_t max_size,
         
         /* Randomly decide whether to expand */
         if ((chacha20_random(rng) % 100) < expansion_intensity) {
-            if (apply_arm64_expansion(code, &current_size, max_size, offset, 
+            if (apply_arm64(code, &current_size, max_size, offset, 
                                      &inst, liveness, rng)) {
                 /* Re-decode to get new length */
                 arm64_inst_t new_inst;
