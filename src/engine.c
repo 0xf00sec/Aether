@@ -9,39 +9,26 @@ static void shuffle_blocks_arm64(uint8_t *code, size_t size, chacha_state_t *rng
 static void flatline_flow_arm64(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng);
 #endif
 
-
-static inline uint8_t get_current_arch(void) {
-#if defined(__x86_64__) || defined(_M_X64)
-    return ARCH_X86;
-#elif defined(__aarch64__) || defined(_M_ARM64)
-    return ARCH_ARM;
-#else
-    return ARCH_X86;
-#endif
-}
-
-static inline const char* get_arch_name(void) {
-#if defined(__x86_64__) || defined(_M_X64)
-    return "x86-64";
-#elif defined(__aarch64__) || defined(_M_ARM64)
-    return "ARM64";
-#else
-    return "Unknown";
-#endif
-}
-
 void init_engine(engine_context_t *ctx) {
     if (!ctx) return;
     
     memset(ctx, 0, sizeof(*ctx));
     ctx->debug_code = NULL;
     ctx->debug_code_size = 0;
-    ctx->unsafe_mode = false;
-    ctx->arch_type = get_current_arch();
+    ctx->un_mode = false;
+#if defined(__x86_64__) || defined(_M_X64)
+    ctx->arch_type = ARCH_X86;
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    ctx->arch_type = ARCH_ARM;
+#else
+    ctx->arch_type = ARCH_X86;
+#endif
     ctx->mutation_count = 0;
     ctx->generation = 0;
     ctx->protected_ranges = NULL;
     ctx->num_protected = 0;
+    ctx->mutation_budget = 0;
+    ctx->mutations_per_gen = 100;
 }
 
 void drop_mut(muttt_t *log, size_t offset, size_t length,  
@@ -323,13 +310,22 @@ static inline bool is_stackp(uint8_t reg) {
 #endif
 }
 
-static inline bool is_protected(size_t offset, const engine_context_t *ctx) { 
+static inline bool is_protected(size_t offset, engine_context_t *ctx) { 
     if (!ctx || !ctx->protected_ranges || ctx->num_protected == 0) return false;
     
-    for (size_t i = 0; i < ctx->num_protected; i++) {
-        uint64_t start = ctx->protected_ranges[i * 2];
-        uint64_t end = ctx->protected_ranges[i * 2 + 1];
-        if (offset >= start && offset < end) return true;
+    size_t left = 0, right = ctx->num_protected;
+    while (left < right) {
+        size_t mid = (left + right) / 2;
+        uint64_t start = ctx->protected_ranges[mid * 2];
+        uint64_t end = ctx->protected_ranges[mid * 2 + 1];
+        
+        if (offset < start) {
+            right = mid;
+        } else if (offset >= end) {
+            left = mid + 1;
+        } else {
+            return true;  /* Found overlapping range */
+        }
     }
     return false;
 }
@@ -365,16 +361,16 @@ static uint8_t jack_reg_arm64(const liveness_state_t *state, uint8_t original_re
     for (uint8_t reg = 19; reg <= 28; reg++) {
         if (reg == original_reg) continue;
         
-        bool is_safe = false;
+        bool is_ = false;
         if (!state->regs[reg].iz_live) {
-            is_safe = true;
+            is_ = true;
         } else if (state->regs[reg].last_use > 0 &&
                    current_offset > state->regs[reg].last_use &&
                    (current_offset - state->regs[reg].last_use) > 32) {
-            is_safe = true;
+            is_ = true;
         }
         
-        if (is_safe) {
+        if (is_) {
             candidates[num_candidates++] = reg;
         }
     }
@@ -435,16 +431,16 @@ uint8_t jack_reg(const liveness_state_t *state, uint8_t original_reg,
         if (reg == original_reg) continue;
         if (reg == 3 || reg == 4 || reg == 5) continue;  /*  Never RBX/RSP/RBP */
         
-        bool is_safe = false;
+        bool is_ = false;
         if (!state->regs[reg].iz_live) {
-            is_safe = true;
+            is_ = true;
         } else if (state->regs[reg].last_use > 0 && 
                    current_offset > state->regs[reg].last_use &&
                    (current_offset - state->regs[reg].last_use) > 32) {
-            is_safe = true;
+            is_ = true;
         }
         
-        if (is_safe && state->regs[reg].iz_vol) {
+        if (is_ && state->regs[reg].iz_vol) {
             candidates[num_candidates++] = reg;
         }
     }
@@ -562,81 +558,73 @@ __attribute__((always_inline)) inline bool is_chunk_ok(const uint8_t *code, size
 
         offset += len;
     }
-    /* allow max 2% invalid instructions */
     return valid_count > 0 && (invalid_count * 50 < valid_count);
 #endif
 }
-
-#if defined(ARCH_ARM)
-/* Generate ARM64 junk instructions semantically useless but valid code */
-static void spew_trash_arm64(uint8_t *buf, size_t *len, chacha_state_t *rng) {
-    if (!buf || !len || !rng) return;
-    
-    uint8_t r1 = random_arm_reg(rng);
-    uint8_t r2 = random_arm_reg(rng);
-    while (r2 == r1) r2 = random_arm_reg(rng);
-    
-    uint8_t choice = chacha20_random(rng) % 15;
-    uint32_t insn = 0;
-    
-    switch (choice) {
-        case 0:
-            insn = 0xD503201F;
-            break;
-        case 1:
-            insn = 0xAA0003E0 | (1u << 31) | r1 | (r1 << 16) | (31 << 5);
-            break;
-        case 2:
-            insn = 0x91000000 | (1u << 31) | r1 | (r1 << 5);
-            break;
-        case 3:
-            insn = 0xD1000000 | (1u << 31) | r1 | (r1 << 5);
-            break;
-        case 4:
-            insn = 0xAA1F0000 | (1u << 31) | r1 | (r1 << 5);
-            break;
-        case 5:
-            insn = 0xCA1F0000 | (1u << 31) | r1 | (r1 << 5);
-            break;
-        case 6:
-            insn = 0x8A000000 | (1u << 31) | r1 | (r1 << 5) | (r1 << 16);
-            break;
-        case 7:
-            insn = 0xAA000000 | (1u << 31) | r1 | (r1 << 5) | (r1 << 16);
-            break;
-        case 8:
-            insn = 0xAA0003E0 | (1u << 31) | r1 | (r2 << 16) | (31 << 5);
-            break;
-        case 9:
-            insn = 0xD3400000 | (1u << 31) | r1 | (r1 << 5);
-            break;
-        case 10:
-            insn = 0xD340FC00 | (1u << 31) | r1 | (r1 << 5);
-            break;
-        case 11:
-            insn = 0xD2800000 | (1u << 31) | r1;
-            break;
-        case 12:
-            insn = 0xCA1F03E0 | (1u << 31) | r1 | (31 << 5);
-            break;
-        case 13:
-            insn = 0xAA1F03E0 | (1u << 31) | r1 | (31 << 5);
-            break;
-        case 14:
-            insn = 0x8B1F03E0 | (1u << 31) | r1 | (31 << 5);
-            break;
-    }
-    
-    *(uint32_t*)buf = insn;
-    *len = 4;
-}
-#endif
 
 void spew_trash(uint8_t *buf, size_t *len, chacha_state_t *rng) {
     if (!buf || !len || !rng) return;
 
 #if defined(ARCH_ARM)
-    spew_trash_arm64(buf, len, rng);
+    {
+        uint8_t r1 = random_arm_reg(rng);
+        uint8_t r2 = random_arm_reg(rng);
+        while (r2 == r1) r2 = random_arm_reg(rng);
+        
+        uint8_t choice = chacha20_random(rng) % 15;
+        uint32_t insn = 0;
+        
+        switch (choice) {
+            case 0:
+                insn = 0xD503201F;
+                break;
+            case 1:
+                insn = 0xAA0003E0 | (1u << 31) | r1 | (r1 << 16) | (31 << 5);
+                break;
+            case 2:
+                insn = 0x91000000 | (1u << 31) | r1 | (r1 << 5);
+                break;
+            case 3:
+                insn = 0xD1000000 | (1u << 31) | r1 | (r1 << 5);
+                break;
+            case 4:
+                insn = 0xAA1F0000 | (1u << 31) | r1 | (r1 << 5);
+                break;
+            case 5:
+                insn = 0xCA1F0000 | (1u << 31) | r1 | (r1 << 5);
+                break;
+            case 6:
+                insn = 0x8A000000 | (1u << 31) | r1 | (r1 << 5) | (r1 << 16);
+                break;
+            case 7:
+                insn = 0xAA000000 | (1u << 31) | r1 | (r1 << 5) | (r1 << 16);
+                break;
+            case 8:
+                insn = 0xAA0003E0 | (1u << 31) | r1 | (r2 << 16) | (31 << 5);
+                break;
+            case 9:
+                insn = 0xD3400000 | (1u << 31) | r1 | (r1 << 5);
+                break;
+            case 10:
+                insn = 0xD340FC00 | (1u << 31) | r1 | (r1 << 5);
+                break;
+            case 11:
+                insn = 0xD2800000 | (1u << 31) | r1;
+                break;
+            case 12:
+                insn = 0xCA1F03E0 | (1u << 31) | r1 | (31 << 5);
+                break;
+            case 13:
+                insn = 0xAA1F03E0 | (1u << 31) | r1 | (31 << 5);
+                break;
+            case 14:
+                insn = 0x8B1F03E0 | (1u << 31) | r1 | (31 << 5);
+                break;
+        }
+        
+        *(uint32_t*)buf = insn;
+        *len = 4;
+    }
 #elif defined(ARCH_X86)
     /* Only use volatile regs to avoid save/restore overhead */
     const uint8_t usable_regs[] = {0,1,2,6,7,8,9,10,11};
@@ -956,7 +944,18 @@ bool sketch_flow(uint8_t *code, size_t size, flowmap *cfg) {
         cfg->num_blocks++;
     }
     
+    /* ensure cfg is valid before processing blocks */
+    if (!cfg->blocks || cfg->num_blocks == 0 || cfg->num_blocks > cfg->cap_blocks) {
+        free(leaders);
+        return (cfg->num_blocks == 0);  /* Empty CFG is valid, corrupted is not */
+    }
+    
     for (size_t bi = 0; bi < cfg->num_blocks; bi++) {
+        if (bi >= cfg->cap_blocks) {
+            DBG("[!] Block index %zu exceeds capacity %zu\n", bi, cfg->cap_blocks);
+            break;
+        }
+        
         blocknode *block = &cfg->blocks[bi];
         
         if (block->end <= block->start || block->end > size) continue;
@@ -1068,7 +1067,6 @@ bool sketch_flow(uint8_t *code, size_t size, flowmap *cfg) {
             /* Indirect jump/call (FF /4 = JMP, FF /2 = CALL) */
             uint8_t reg = modrm_reg(last_inst.modrm);
             if (reg == 4 || reg == 5) {
-                /* Indirect JMP - mark as potential exit */
                 block->is_exit = true;
             } else if (reg == 2 || reg == 3) {
                 /* Assume it returns */
@@ -1092,7 +1090,7 @@ bool sketch_flow(uint8_t *code, size_t size, flowmap *cfg) {
     DBG("Built CFG with %zu blocks\n", cfg->num_blocks);
     return cfg->num_blocks > 0;
 #else
-    /* Fallback for unknown architectures */
+    /* Fallback for unknown arch */
     if (cfg) *cfg = (flowmap){0};
     return false;
 #endif
@@ -2225,7 +2223,7 @@ static void win_reorder_arm64(uint8_t *code, size_t size, arm64_inst_t *win,
 
 void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                     muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity,
-                    const engine_context_t *ectx) {
+                    engine_context_t *ectx) {
     if (!code || !rng || size < 4) return;
     
     size_t offset = 0;
@@ -2270,6 +2268,16 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
         if (is_protected(offset, ectx)) {
             offset += 4;
             continue;
+        }
+        
+        /* Check mutation budget inline */
+        if (ectx && ectx->mutations_per_gen > 0) {
+            unsigned max_mutations = ectx->mutations_per_gen / (gen + 1);
+            if (max_mutations < 10) max_mutations = 10;
+            if (ectx->mutation_count >= max_mutations) {
+                offset += 4;
+                continue;
+            }
         }
         
         bool mutated = false;
@@ -2340,9 +2348,19 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                 *(uint32_t*)test_buf = new_insn;
                 if (decode_arm64(test_buf, &test) && test.valid && !test.ring0) {
                     *(uint32_t*)(code + offset) = new_insn;
-                    mutated = true;
-                    changes++;
-                    if (log) drop_mut(log, offset, 4, MUT_REG, gen, "arm64 reg subst");
+                    
+                    /* verify the mutation */
+                    arm64_inst_t verify;
+                    bool valid = decode_arm64(code + offset, &verify) && verify.valid && !verify.ring0;
+                    
+                    if (valid) {
+                        mutated = true;
+                        changes++;
+                        if (ectx) ectx->mutation_count++;
+                        if (log) drop_mut(log, offset, 4, MUT_REG, gen, "arm64 reg subst");
+                    } else {
+                        *(uint32_t*)(code + offset) = backup;
+                    }
                 }
             }
         }
@@ -2357,9 +2375,18 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                 new_insn |= (31 << 5);  /* Rn = XZR */
                 
                 *(uint32_t*)(code + offset) = new_insn;
-                mutated = true;
-                changes++;
-                if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "mov->orr");
+                
+                arm64_inst_t verify;
+                bool valid = decode_arm64(code + offset, &verify) && verify.valid && !verify.ring0;
+                
+                if (valid) {
+                    mutated = true;
+                    changes++;
+                    if (ectx) ectx->mutation_count++;
+                    if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "mov->orr");
+                } else {
+                    *(uint32_t*)(code + offset) = backup;
+                }
             }
         }
         
@@ -2408,8 +2435,18 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
             }
             
             if (mutated) {
-                changes++;
-                if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "zero equiv");
+                
+                arm64_inst_t verify;
+                bool valid = decode_arm64(code + offset, &verify) && verify.valid && !verify.ring0;
+                
+                if (valid) {
+                    changes++;
+                    if (ectx) ectx->mutation_count++;
+                    if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "zero equiv");
+                } else {
+                    *(uint32_t*)(code + offset) = backup;
+                    mutated = false;
+                }
             }
         }
         
@@ -2424,9 +2461,19 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                 new_insn |= ((inst.rn & 0x1F) << 16);
                 new_insn |= (31 << 5);  
                 *(uint32_t*)(code + offset) = new_insn;
-                mutated = true;
-                changes++;
-                if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "add0->mov");
+                
+                
+                arm64_inst_t verify;
+                bool valid = decode_arm64(code + offset, &verify) && verify.valid && !verify.ring0;
+                
+                if (valid) {
+                    mutated = true;
+                    changes++;
+                    if (ectx) ectx->mutation_count++;
+                    if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "add0->mov");
+                } else {
+                    *(uint32_t*)(code + offset) = backup;
+                }
             }
         }
         
@@ -2441,9 +2488,19 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
             new_insn |= (31);  /*  Rd = XZR */
             new_insn |= ((inst.rn & 0x1F) << 5);
             *(uint32_t*)(code + offset) = new_insn;
-            mutated = true;
-            changes++;
-            if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "cmp->cmn");
+            
+            
+            arm64_inst_t verify;
+            bool valid = decode_arm64(code + offset, &verify) && verify.valid && !verify.ring0;
+            
+            if (valid) {
+                mutated = true;
+                changes++;
+                if (ectx) ectx->mutation_count++;
+                if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "cmp->cmn");
+            } else {
+                *(uint32_t*)(code + offset) = backup;
+            }
         }
         
         /* MOV immediate splitting */
@@ -2586,18 +2643,30 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                 }
                 
                 if (mutated) {
-                    changes++;
+                    /* decode all instructions in split region */
                     size_t split_len = 0;
+                    bool valid = true;
                     for (size_t i = offset; i < view_size && i < offset + 16; i += 4) {
                         arm64_inst_t check;
-                        if (decode_arm64(code + i, &check) && check.valid) {
+                        if (decode_arm64(code + i, &check) && check.valid && !check.ring0) {
                             split_len += 4;
                         } else {
+                            valid = false;
                             break;
                         }
+                        if (split_len >= 12) break;  /* Max 3 instructions */
                     }
-                    if (log && split_len >= 4) {
-                        drop_mut(log, offset, split_len, MUT_EXPAND, gen, "arm64 mov split");
+                    
+                    if (valid && split_len >= 4) {
+                        changes++;
+                        if (ectx) ectx->mutation_count++;
+                        if (log) {
+                            drop_mut(log, offset, split_len, MUT_EXPAND, gen, "arm64 mov split");
+                        }
+                    } else {
+                        /* Rollback the split */
+                        *(uint32_t*)(code + offset) = backup;
+                        mutated = false;
                     }
                 }
             }
@@ -2631,8 +2700,18 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                 }
             }
             if (mutated) {
-                changes++;
-                if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "arm64 mov equiv");
+                
+                arm64_inst_t verify;
+                bool valid = decode_arm64(code + offset, &verify) && verify.valid && !verify.ring0;
+                
+                if (valid) {
+                    changes++;
+                    if (ectx) ectx->mutation_count++;
+                    if (log) drop_mut(log, offset, 4, MUT_EQUIV, gen, "arm64 mov equiv");
+                } else {
+                    *(uint32_t*)(code + offset) = backup;
+                    mutated = false;
+                }
             }
         }
         
@@ -2703,19 +2782,35 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                 insn2 |= (inst.rd << 5);
                 insn2 |= (inst.rm << 16);
                 *(uint32_t*)(code + offset + 4) = insn2;
-                mutated = true;
-                changes++;
-                if (log) drop_mut(log, offset, 8, MUT_EQUIV, gen, "arm64 add chain");
+                /* decode both instructions */
+                bool valid = true;
+                for (size_t i = offset; i < offset + 8 && i + 4 <= view_size; i += 4) {
+                    arm64_inst_t check;
+                    if (!decode_arm64(code + i, &check) || !check.valid || check.ring0) {
+                        valid = false;
+                        break;
+                    }
+                }
+                
+                if (valid) {
+                    mutated = true;
+                    changes++;
+                    if (ectx) ectx->mutation_count++;
+                    if (log) drop_mut(log, offset, 8, MUT_EQUIV, gen, "arm64 add chain");
+                } else {
+                    *(uint32_t*)(code + offset) = backup;
+                }
             }
         }
         
-        /* Validate mutation */
+        /* Final validation for any mutation not already validated */
         if (mutated) {
             arm64_inst_t verify;
             if (!decode_arm64(code + offset, &verify) || !verify.valid || verify.ring0) {
                 /* Rollback */
                 *(uint32_t*)(code + offset) = backup;
-                changes--;
+                if (changes > 0) changes--;
+                if (ectx && ectx->mutation_count > 0) ectx->mutation_count--;
                 mutated = false;
             }
         }
@@ -2727,7 +2822,7 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
 
 void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                         muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity,
-                        const engine_context_t *ectx) {
+                        engine_context_t *ectx) {
     if (!code || !rng) return;
     
     size_t offset = 0;
@@ -2739,8 +2834,10 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
         unsigned chain_depth = 1 + (gen / 10);  
         if (chain_depth > 3) chain_depth = 3;   /*  Ka-Boom */
         
+        /* Relocations are handled at higher level */
         size_t new_size = expand_chains(code, size, size * 2, liveness, rng, 
-                                             chain_depth, mutation_intensity * 2);
+                                             chain_depth, mutation_intensity * 2,
+                                             NULL, 0);
         if (new_size > size && new_size <= size * 2) {
             if (log) drop_mut(log, 0, new_size, MUT_EXPAND, gen, "chain expand");
             /*  Note: size parameter is const, so we can't update it here */
@@ -2766,7 +2863,7 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
 
         if (liveness) pulse_live(liveness, offset, &inst);
 
-        /* Skip protected regions (entry point, external calls, critical functions) */
+        /* Skip protected regions (entry point, external calls, functions) */
         if (is_protected(offset, ectx)) {
             offset += inst.len;
             continue;
@@ -2790,6 +2887,16 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
 
         bool mutated = false;
 
+        /* Check mutation budget inline */
+        if (ectx && ectx->mutations_per_gen > 0) {
+            unsigned max_mutations = ectx->mutations_per_gen / (gen + 1);
+            if (max_mutations < 10) max_mutations = 10;
+            if (ectx->mutation_count >= max_mutations) {
+                offset += inst.len;
+                continue;
+            }
+        }
+
         if (inst.has_modrm && inst.len <= 8 && inst.len >= 2) {
             uint8_t reg = modrm_reg(inst.modrm);
             uint8_t rm = modrm_rm(inst.modrm);
@@ -2800,10 +2907,10 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
             }
             
             /* Only mutate MOV-like instructions, not arithmetic/shifts */
-            bool is_safe_opcode = (inst.opcode[0] >= 0x88 && inst.opcode[0] <= 0x8F);
+            bool is__opcode = (inst.opcode[0] >= 0x88 && inst.opcode[0] <= 0x8F);
             
             /* Only substitute in reg-to-reg ops (mod==3) */
-            if (mod == 3 && liveness && is_safe_opcode) {
+            if (mod == 3 && liveness && is__opcode) {
                 uint8_t new_reg = jack_reg(liveness, reg, offset, rng);
                 uint8_t new_rm = jack_reg(liveness, rm, offset, rng);
                 
@@ -2842,14 +2949,39 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                         code[modrm_offset] = temp_modrm;
                         
                         x86_inst_t verify;
-                        if (decode_x86_withme(code + offset, size - offset, 0, &verify, NULL) &&
-                            verify.valid && 
-                            !verify.ring0 &&
-                            verify.has_modrm &&
-                            verify.len == inst.len &&
-                            verify.opcode[0] == inst.opcode[0] &&
-                            ((verify.modrm >> 6) & 3) == 3) {
+                        bool valid = decode_x86_withme(code + offset, size - offset, 0, &verify, NULL) &&
+                                     verify.valid && 
+                                     !verify.ring0 &&
+                                     verify.has_modrm &&
+                                     verify.len == inst.len &&
+                                     verify.opcode[0] == inst.opcode[0] &&
+                                     ((verify.modrm >> 6) & 3) == 3;
+                        
+                        /* decode entire mutated region */
+                        if (valid) {
+                            size_t scan = offset;
+                            size_t end = offset + inst.len;
+                            size_t invalid_count = 0;
+                            
+                            while (scan < end && scan < size) {
+                                x86_inst_t check;
+                                if (!decode_x86_withme(code + scan, end - scan, 0, &check, NULL) ||
+                                    !check.valid || check.ring0 || check.len == 0) {
+                                    invalid_count++;
+                                    if (invalid_count > 1) {
+                                        valid = false;
+                                        break;
+                                    }
+                                    scan++;
+                                } else {
+                                    scan += check.len;
+                                }
+                            }
+                        }
+                        
+                        if (valid) {
                             mutated = true;
+                            if (ectx) ectx->mutation_count++;
                         } else {
                             code[modrm_offset] = orig_byte;
                         }
@@ -2859,56 +2991,115 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
         }
         skip:
         if (!mutated) {
+            /* Check budget inline */
+            bool budget_ok = true;
+            if (ectx && ectx->mutations_per_gen > 0) {
+                unsigned max_mutations = ectx->mutations_per_gen / (gen + 1);
+                if (max_mutations < 10) max_mutations = 10;
+                budget_ok = (ectx->mutation_count < max_mutations);
+            }
+            
             /* XOR reg,reg equivalence */
-            if (inst.opcode[0] == 0x31 && inst.has_modrm && modrm_reg(inst.modrm) == modrm_rm(inst.modrm)) {
+            if (budget_ok && inst.opcode[0] == 0x31 && inst.has_modrm && modrm_reg(inst.modrm) == modrm_rm(inst.modrm)) {
                 uint8_t mod = (inst.modrm >> 6) & 3;
                 uint8_t reg = modrm_reg(inst.modrm);
                 
                 if (mod == 3 && reg != 4 && reg != 5) {
+                    uint8_t backup[16];
+                    memcpy(backup, code + offset, inst.len);
+                    
                     if (chacha20_random(rng) % 2) {
                         code[offset] = 0x29;
                     } else {
                         code[offset] = 0xB8 + reg;
                         if (offset + 5 <= view_size) memset(code + offset + 1, 0, 4);
                     }
-                    if (!is_op_ok(code + offset)) {
-                        if (offset + inst.len <= size && inst.len > 0) memcpy(code + offset, inst.raw, inst.len);
+                    
+                    
+                    bool valid = is_op_ok(code + offset);
+                    if (valid) {
+                        size_t scan = offset;
+                        size_t end = offset + inst.len;
+                        while (scan < end && scan < size) {
+                            x86_inst_t check;
+                            if (!decode_x86_withme(code + scan, end - scan, 0, &check, NULL) ||
+                                !check.valid || check.ring0) {
+                                valid = false;
+                                break;
+                            }
+                            scan += check.len;
+                        }
+                    }
+                    
+                    if (!valid) {
+                        memcpy(code + offset, backup, inst.len);
                     } else {
                         mutated = true;
+                        if (ectx) ectx->mutation_count++;
                     }
                 }
             }
             else if ((inst.opcode[0] & 0xF8) == 0xB8 && inst.imm == 0) {
-                uint8_t reg = inst.opcode[0] & 0x7;
-                if (reg != 4 && reg != 5) {
-                    size_t new_len = 0;
-                    
-                    switch(chacha20_random(rng) % 3) {
-                        case 0:
-                            code[offset] = 0x31;
-                            code[offset+1] = 0xC0 | (reg << 3) | reg;
-                            new_len = 2;
-                            break;
-                        case 1:
-                            code[offset] = 0x83;
-                            code[offset+1] = 0xE0 | reg;
-                            code[offset+2] = 0x00;
-                            new_len = 3;
-                            break;
-                        case 2:
-                            code[offset] = 0x29;
-                            code[offset+1] = 0xC0 | (reg << 3) | reg;
-                            new_len = 2;
-                            break;
+                /* Check budget inline */
+                bool budget_ok = true;
+                if (ectx && ectx->mutations_per_gen > 0) {
+                    unsigned max_mutations = ectx->mutations_per_gen / (gen + 1);
+                    if (max_mutations < 10) max_mutations = 10;
+                    budget_ok = (ectx->mutation_count < max_mutations);
+                }
+                
+                if (budget_ok) {
+                    uint8_t reg = inst.opcode[0] & 0x7;
+                    if (reg != 4 && reg != 5) {
+                        uint8_t backup[16];
+                        memcpy(backup, code + offset, inst.len);
+                        size_t new_len = 0;
+                        
+                        switch(chacha20_random(rng) % 3) {
+                            case 0:
+                                code[offset] = 0x31;
+                                code[offset+1] = 0xC0 | (reg << 3) | reg;
+                                new_len = 2;
+                                break;
+                            case 1:
+                                code[offset] = 0x83;
+                                code[offset+1] = 0xE0 | reg;
+                                code[offset+2] = 0x00;
+                                new_len = 3;
+                                break;
+                            case 2:
+                                code[offset] = 0x29;
+                                code[offset+1] = 0xC0 | (reg << 3) | reg;
+                                new_len = 2;
+                                break;
+                        }
+                        
+                        if (new_len < inst.len && offset + inst.len <= view_size) {
+                            memset(code + offset + new_len, 0x90, inst.len - new_len);
+                        }
+                        
+                        bool valid = is_op_ok(code + offset);
+                        if (valid) {
+                            size_t scan = offset;
+                            size_t end = offset + inst.len;
+                            while (scan < end && scan < size) {
+                                x86_inst_t check;
+                                if (!decode_x86_withme(code + scan, end - scan, 0, &check, NULL) ||
+                                    !check.valid || check.ring0) {
+                                    valid = false;
+                                    break;
+                                }
+                                scan += check.len;
+                            }
+                        }
+                        
+                        if (!valid) {
+                            memcpy(code + offset, backup, inst.len);
+                        } else {
+                            mutated = true;
+                            if (ectx) ectx->mutation_count++;
+                        }
                     }
-                    
-                    if (new_len < inst.len && offset + inst.len <= view_size) {
-                        memset(code + offset + new_len, 0x90, inst.len - new_len);
-                    }
-                    
-                    if (!is_op_ok(code + offset)) {
-                        if (offset + inst.len <= view_size && inst.len > 0) memcpy(code + offset, inst.raw, inst.len);
-                    } else mutated = true;
                 }
             }
             else if (inst.opcode[0] == 0x83 && inst.has_modrm && inst.raw[2] == 0x01) {
@@ -2916,6 +3107,9 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                 uint8_t mod = (inst.modrm >> 6) & 3;
                 
                 if (mod == 3 && reg != 4 && reg != 5 && offset + 3 <= size) {
+                    uint8_t backup[16];
+                    memcpy(backup, code + offset, inst.len);
+                    
                     if (chacha20_random(rng) % 2) {
                         code[offset] = 0x48;
                         code[offset+1] = 0xFF;
@@ -2936,9 +3130,20 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                             }
                         }
                     }
-                    if (!is_op_ok(code + offset)) {
-                        if (offset + inst.len <= view_size && inst.len > 0) memcpy(code + offset, inst.raw, inst.len);
-                    } else mutated = true;
+                    
+                    bool valid = is_op_ok(code + offset);
+                    if (valid) {
+                        x86_inst_t check;
+                        valid = decode_x86_withme(code + offset, size - offset, 0, &check, NULL) &&
+                                check.valid && !check.ring0;
+                    }
+                    
+                    if (!valid) {
+                        memcpy(code + offset, backup, inst.len);
+                    } else {
+                        mutated = true;
+                        if (ectx) ectx->mutation_count++;
+                    }
                 }
             }
             else if (inst.opcode[0] == 0x8D && inst.has_modrm) {
@@ -2947,18 +3152,44 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                 uint8_t mod = (inst.modrm >> 6) & 3;
                 
                 if (reg == rm && reg != 4 && reg != 5 && rm != 4 && rm != 5 && inst.disp == 0 && !inst.has_sib && mod != 0) {
+                    uint8_t backup = code[offset];
                     code[offset] = 0x89;
-                    if (!is_op_ok(code + offset)) code[offset] = 0x8D;
-                    else mutated = true;
+                    
+                    bool valid = is_op_ok(code + offset);
+                    if (valid) {
+                        x86_inst_t check;
+                        valid = decode_x86_withme(code + offset, size - offset, 0, &check, NULL) &&
+                                check.valid && !check.ring0 && check.len == inst.len;
+                    }
+                    
+                    if (!valid) {
+                        code[offset] = backup;
+                    } else {
+                        mutated = true;
+                        if (ectx) ectx->mutation_count++;
+                    }
                 }
             }
             else if (inst.opcode[0] == 0x85 && inst.has_modrm) {
                 uint8_t reg = modrm_reg(inst.modrm);
                 uint8_t rm = modrm_rm(inst.modrm);
                 if (reg == rm && reg != 4 && reg != 5) {
+                    uint8_t backup = code[offset];
                     code[offset] = 0x39;
-                    if (!is_op_ok(code + offset)) code[offset] = 0x85;
-                    else mutated = true;
+                    
+                    bool valid = is_op_ok(code + offset);
+                    if (valid) {
+                        x86_inst_t check;
+                        valid = decode_x86_withme(code + offset, size - offset, 0, &check, NULL) &&
+                                check.valid && !check.ring0 && check.len == inst.len;
+                    }
+                    
+                    if (!valid) {
+                        code[offset] = backup;
+                    } else {
+                        mutated = true;
+                        if (ectx) ectx->mutation_count++;
+                    }
                 }
             }
         }
@@ -3030,6 +3261,24 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                 offset += inst.len;
                 continue;
             }
+            
+            /* Check budget inline */
+            bool budget_ok = true;
+            if (ectx && ectx->mutations_per_gen > 0) {
+                unsigned max_mutations = ectx->mutations_per_gen / (gen + 1);
+                if (max_mutations < 10) max_mutations = 10;
+                budget_ok = (ectx->mutation_count < max_mutations);
+            }
+            
+            if (!budget_ok) {
+                offset += inst.len;
+                continue;
+            }
+            
+            uint8_t backup[32];
+            size_t backup_len = (inst.len < 32) ? inst.len : 32;
+            memcpy(backup, code + offset, backup_len);
+            
             switch(chacha20_random(rng) % 30) {
                 case 0:  /* XOR + ADD */
                     if (offset + 10 <= view_size) {
@@ -3126,10 +3375,35 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                     break;
             }
         
-            if (!is_op_ok(code + offset)) {
-                if (offset + inst.len <= view_size && inst.len > 0) memcpy(code + offset, inst.raw, inst.len);
+            /*  for instruction splitting */
+            bool valid = is_op_ok(code + offset);
+            if (valid) {
+                /* Decode all instructions in the expanded region */
+                size_t scan = offset;
+                size_t end = offset + 17;  /* Max expansion size */
+                if (end > size) end = size;
+                size_t decoded_count = 0;
+                
+                while (scan < end && decoded_count < 5) {
+                    x86_inst_t check;
+                    if (!decode_x86_withme(code + scan, end - scan, 0, &check, NULL) ||
+                        !check.valid || check.ring0 || check.len == 0) {
+                        valid = false;
+                        break;
+                    }
+                    scan += check.len;
+                    decoded_count++;
+                }
+                
+                /* Must have decoded at least 2 instructions */
+                if (decoded_count < 2) valid = false;
+            }
+            
+            if (!valid) {
+                memcpy(code + offset, backup, backup_len);
             } else {
                 mutated = true;
+                if (ectx) ectx->mutation_count++;
             }
         }        
 
@@ -3142,29 +3416,51 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                     continue;
                 }
             }
-            uint8_t orgi_op = inst.opcode[0];
-            uint8_t new_opcode = orgi_op;
-            switch(chacha20_random(rng) % 4) {
-                case 0:
-                    if (inst.has_modrm && modrm_reg(inst.modrm) == modrm_rm(inst.modrm)) new_opcode = (orgi_op == 0x89) ? 0x87 : 0x89;
-                    break;
-                case 1:
-                    if (orgi_op == 0x01) new_opcode = 0x29;
-                    else if (orgi_op == 0x29) new_opcode = 0x01;
-                    break;
-                case 2:
-                    if (orgi_op == 0x21) new_opcode = 0x09;
-                    else if (orgi_op == 0x09) new_opcode = 0x21;
-                    break;
-                case 3:
-                    if (orgi_op == 0x31 && inst.has_modrm && modrm_reg(inst.modrm) == modrm_rm(inst.modrm)) new_opcode = 0x89;
-                    break;
+            
+            /* Check budget inline */
+            bool budget_ok = true;
+            if (ectx && ectx->mutations_per_gen > 0) {
+                unsigned max_mutations = ectx->mutations_per_gen / (gen + 1);
+                if (max_mutations < 10) max_mutations = 10;
+                budget_ok = (ectx->mutation_count < max_mutations);
             }
-            if (new_opcode != orgi_op) {
-                code[offset] = new_opcode;
-                if (is_op_ok(code + offset)) {
-                    mutated = true;
-                } else code[offset] = orgi_op;
+            
+            if (budget_ok) {
+                uint8_t orgi_op = inst.opcode[0];
+                uint8_t new_opcode = orgi_op;
+                switch(chacha20_random(rng) % 4) {
+                    case 0:
+                        if (inst.has_modrm && modrm_reg(inst.modrm) == modrm_rm(inst.modrm)) new_opcode = (orgi_op == 0x89) ? 0x87 : 0x89;
+                        break;
+                    case 1:
+                        if (orgi_op == 0x01) new_opcode = 0x29;
+                        else if (orgi_op == 0x29) new_opcode = 0x01;
+                        break;
+                    case 2:
+                        if (orgi_op == 0x21) new_opcode = 0x09;
+                        else if (orgi_op == 0x09) new_opcode = 0x21;
+                        break;
+                    case 3:
+                        if (orgi_op == 0x31 && inst.has_modrm && modrm_reg(inst.modrm) == modrm_rm(inst.modrm)) new_opcode = 0x89;
+                        break;
+                }
+                if (new_opcode != orgi_op) {
+                    code[offset] = new_opcode;
+                    
+                    bool valid = is_op_ok(code + offset);
+                    if (valid) {
+                        x86_inst_t check;
+                        valid = decode_x86_withme(code + offset, size - offset, 0, &check, NULL) &&
+                                check.valid && !check.ring0 && check.len == inst.len;
+                    }
+                    
+                    if (valid) {
+                        mutated = true;
+                        if (ectx) ectx->mutation_count++;
+                    } else {
+                        code[offset] = orgi_op;
+                    }
+                }
             }
         }
 
@@ -3185,13 +3481,20 @@ void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
 }
 #endif
 
-__attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, const engine_context_t *ectx) {
+__attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, engine_context_t *ectx) {
     if (!code || size == 0 || !rng) return;
 
     muttt_t mut_log;
-    liveness_state_t liveness;
+    liveness_state_t *liveness = calloc(1, sizeof(liveness_state_t));
+    if (!liveness) return;
     init_mut(&mut_log);
-    boot_live(&liveness);
+    boot_live(liveness);
+
+    /* Reset mutation count for this generation */
+    if (ectx) {
+        ectx->mutation_count = 0;
+        ectx->generation = gen;
+    }
 
     unsigned mutation_intensity = gen + 1;
     if (mutation_intensity > 20) mutation_intensity = 20;
@@ -3204,7 +3507,7 @@ __attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, cha
             offset++;
             continue;
         }
-        scramble_x86(code + offset, inst.len, rng, gen, &mut_log, &liveness, mutation_intensity, ectx);
+        scramble_x86(code + offset, inst.len, rng, gen, &mut_log, liveness, mutation_intensity, ectx);
         offset += inst.len;
     }
 
@@ -3224,7 +3527,7 @@ __attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, cha
 #elif defined(__aarch64__) || defined(_M_ARM64)
     /* Apply batch expansion first (gen 5+) */
     if (gen >= 5 && (chacha20_random(rng) % 10) < (gen > 10 ? 6 : 3)) {
-        size_t new_size = expand_arm64(code, size, size * 2, &liveness, rng,
+        size_t new_size = expand_arm64(code, size, size * 2, liveness, rng,
                                                      mutation_intensity * 2);
         if (new_size > size && new_size <= size * 2) {
             DBG("ARM64 batch expansion: %zu -> %zu bytes (+%zu)\n", 
@@ -3242,10 +3545,10 @@ __attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, cha
             continue;
         }
         
-        if (liveness) pulse_live(&liveness, offset, &inst);
+        pulse_live(liveness, offset, &inst);
         
         /* Apply ARM64 mutations */
-        scramble_arm64(code + offset, 4, rng, gen, &mut_log, &liveness, mutation_intensity, ectx);
+        scramble_arm64(code + offset, 4, rng, gen, &mut_log, liveness, mutation_intensity, ectx);
         
         offset += 4;
     }
@@ -3270,6 +3573,7 @@ __attribute__((always_inline)) inline void _mut8(uint8_t *code, size_t size, cha
 #endif
 
     freeme(&mut_log);
+    free(liveness);
 }
 
 /* Mutation Entry */
@@ -3288,100 +3592,54 @@ void mutate(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, engin
     _mut8(code, size, rng, gen, ctx);
 }
 
-static bool in_check(const uint8_t *code, size_t size, size_t original_size) {
-    if (!code || size == 0) return false;
-    
-    /*  Check size growth (max 3x original) */
-    if (size > original_size * 3) {
-        DBG("size %zu exceeds 3x original %zu\n", size, original_size);
-        return false;
-    }
-    
-#if defined(ARCH_ARM)
-    /*  Must be 4-byte aligned */
-    if ((size % 4) != 0) {
-        DBG("ARM64 size %zu not 4-byte aligned\n", size);
-        return false;
-    }
-    
-    size_t valid_count = 0;
-    size_t privileged_count = 0;
-    
-    for (size_t offset = 0; offset + 4 <= size; offset += 4) {
-        arm64_inst_t inst;
-        if (!decode_arm64(code + offset, &inst)) {
-            DBG("decode error at offset %zu\n", offset);
-            return false;
-        }
-        
-        if (!inst.valid) {
-            DBG("invalid instruction at offset %zu\n", offset);
-            return false;
-        }
-        
-        if (inst.ring0) {
-            privileged_count++;
-            DBG("Yo: privileged instruction at offset %zu\n", offset);
-        }
-        
-        valid_count++;
-    }
-    
-    if (privileged_count > 0) {
-        DBG("Yo: %zu privileged instructions found\n", privileged_count);
-    }
-    
-    DBG("%zu valid ARM64 instructions\n", valid_count);
-    return true;
-    
-#else  /*  x86-64 */
-    size_t valid_count = 0;
-    size_t offset = 0;
-    
-    while (offset < size) {
-        x86_inst_t inst;
-        if (!decode_x86_withme(code + offset, size - offset, 0, &inst, NULL)) {
-            offset++;
-            continue;
-        }
-        
-        if (!inst.valid) {
-            offset++;
-            continue;
-        }
-        
-        if (inst.ring0) {
-            DBG("Yo: privileged instruction at offset %zu\n", offset);
-        }
-        
-        valid_count++;
-        offset += inst.len;
-    }
-    
-    DBG("%zu valid x86-64 instructions\n", valid_count);
-    return valid_count > 0;
-#endif
-}
-
 size_t decode_map(const uint8_t *code, size_t size, instr_info_t *out, size_t max) {
+    if (!code || !out || max == 0) {
+        return 0;
+    } if (size == 0 || size > 0x10000000) {return 0;}
+    
     size_t n = 0, off = 0;
     size_t cf_count = 0;
     size_t failed_decodes = 0;
+    const size_t max_failed = size / 10;  /* Allow max 10% failures */
     
 #if defined(__x86_64__) || defined(_M_X64)
     while (off < size && n < max) {
+        
+        if (failed_decodes > max_failed) {
+            break;
+        }
+        
         x86_inst_t inst;
         if (!decode_x86_withme(code + off, size - off, 0, &inst, NULL)) {
             failed_decodes++;
             off++;
             continue;
         }
+        
+        /* Validate instruction length */
+        if (inst.len == 0 || inst.len > 15 || off + inst.len > size) {
+            failed_decodes++;
+            off++;
+            continue;
+        } if (n >= max) {break;}
+        
         out[n].off = off;
         out[n].len = inst.len;
         out[n].type = inst.opcode[0];
         out[n].cf = inst.is_control_flow;
         out[n].valid = 1;
-        memcpy(out[n].raw, code + off, inst.len > 16 ? 16 : inst.len);
+        
+        /*  memcpy with bounds check */
+        size_t copy_len = (inst.len > 16) ? 16 : inst.len;
+        if (off + copy_len <= size) {
+            memcpy(out[n].raw, code + off, copy_len);
+        } else {
+            /* Partial copy if near end */
+            size_t sf_len = size - off; 
+            if (sf_len > 0 && sf_len <= 16) {
+                memcpy(out[n].raw, code + off, sf_len);
+            }
+        }
         
         if (inst.is_control_flow) {
             cf_count++;
@@ -3391,23 +3649,28 @@ size_t decode_map(const uint8_t *code, size_t size, instr_info_t *out, size_t ma
         n++;
     }
 #elif defined(__aarch64__) || defined(_M_ARM64)
-    while (off + 4 <= size && n < max) {
+    while (off + 4 <= size && n < max) {if (failed_decodes > max_failed) {break;}
+        
         arm64_inst_t inst;
         if (!decode_arm64(code + off, &inst) || !inst.valid) {
             failed_decodes++;
             off += 4;
             continue;
         }
+        
+        /* Check array bounds before writing */
+        if (n >= max) {
+            break;
+        }
+        
         out[n].off = off;
         out[n].len = 4;
         out[n].type = inst.type;
         out[n].cf = inst.is_control_flow;
         out[n].valid = 1;
-        memcpy(out[n].raw, code + off, 4);
         
-        if (inst.is_control_flow) {
-            cf_count++;
-        }
+        if (off + 4 <= size) {memcpy(out[n].raw, code + off, 4);}
+        if (inst.is_control_flow) {cf_count++;}
         
         off += 4;
         n++;
