@@ -15,7 +15,6 @@ void init_engine(engine_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     ctx->debug_code = NULL;
     ctx->debug_code_size = 0;
-    ctx->un_mode = false;
 #if defined(__x86_64__) || defined(_M_X64)
     ctx->arch_type = ARCH_X86;
 #elif defined(__aarch64__) || defined(_M_ARM64)
