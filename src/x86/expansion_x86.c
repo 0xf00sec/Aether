@@ -42,6 +42,12 @@ static expansion_t reg_xchg(uint8_t dst, uint8_t src, chacha_state_t *rng) {
 static expansion_t xor_add(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
     expansion_t exp = {0};
     
+    /* Skip 64-bit values that don't fit in 32-bit signed */
+    if (imm > 0x7FFFFFFF && imm < 0xFFFFFFFF80000000ULL) {
+        exp.valid = false;
+        return exp;
+    }
+    
     /* For small immediates, use multiple adds for size increase */
     if (imm <= 20 && imm > 0) {
         /* xor reg, reg */
@@ -59,13 +65,21 @@ static expansion_t xor_add(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
             exp.code[exp.len++] = chunk;
             remaining -= chunk;
         }
-    } else {
-        /* Standard xor + add for larger values */
+    } else if (imm <= 0x7FFFFFFF) {
+        /* Standard xor + add for 32-bit values */
         exp.code[0] = 0x48; exp.code[1] = 0x31;
         exp.code[2] = 0xC0 | (reg << 3) | reg;  /* xor reg, reg */
         exp.code[3] = 0x48; exp.code[4] = 0x81;
         exp.code[5] = 0xC0 | reg;  /* add reg, imm32 */
         *(uint32_t*)(exp.code + 6) = (uint32_t)imm;
+        exp.len = 10;
+    } else {
+        /* For negative 32-bit values (sign-extended) */
+        exp.code[0] = 0x48; exp.code[1] = 0x31;
+        exp.code[2] = 0xC0 | (reg << 3) | reg;  /* xor reg, reg */
+        exp.code[3] = 0x48; exp.code[4] = 0x81;
+        exp.code[5] = 0xC0 | reg;  /* add reg, imm32 */
+        *(int32_t*)(exp.code + 6) = (int32_t)imm;
         exp.len = 10;
     }
     
@@ -82,13 +96,14 @@ static expansion_t push_pop(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
         return exp;
     }
     
-    if (imm > 0x7FFFFFFF) {  /* Only works for 32-bit immediates */
+    /* Only works for 32-bit sign-extended immediates */
+    if (imm > 0x7FFFFFFF && imm < 0xFFFFFFFF80000000ULL) {
         exp.valid = false;
         return exp;
     }
     
     exp.code[0] = 0x68;  /* push imm32 */
-    *(uint32_t*)(exp.code + 1) = (uint32_t)imm;
+    *(int32_t*)(exp.code + 1) = (int32_t)imm;
     exp.code[5] = 0x58 | reg;  /* pop reg */
     exp.len = 6;
     exp.valid = true;
@@ -106,7 +121,6 @@ static expansion_t add1_to_inc(uint8_t reg, chacha_state_t *rng) {
     return exp;
 }
 
-/* add reg, N > inc reg (N times) */
 static expansion_t to_inc_chain(uint8_t reg, uint8_t count, chacha_state_t *rng) {
     expansion_t exp = {0};
     
@@ -114,7 +128,7 @@ static expansion_t to_inc_chain(uint8_t reg, uint8_t count, chacha_state_t *rng)
         exp.valid = false;
         return exp;
     }
-    
+        
     for (uint8_t i = 0; i < count; i++) {
         exp.code[exp.len++] = 0x48;
         exp.code[exp.len++] = 0xFF;
@@ -390,15 +404,17 @@ static expansion_t lea_indexed(uint8_t dst, uint8_t src, chacha_state_t *rng) {
 static expansion_t shift_add(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
     expansion_t exp = {0};
     
-    if (imm == 0 || imm > 0xFFFFFFFF) {
+    /* Only handle 32-bit values */
+    if (imm == 0 || imm > 0x7FFFFFFF) {
         exp.valid = false;
         return exp;
     }
     
     /* Split: imm = (part1 << shift) + part2 */
     uint8_t shift = 1 + (chacha20_random(rng) % 3);  /* 1-3 bits */
-    uint32_t part1 = (uint32_t)imm >> shift;
-    uint32_t part2 = (uint32_t)imm - (part1 << shift);
+    uint32_t imm32 = (uint32_t)imm;
+    uint32_t part1 = imm32 >> shift;
+    uint32_t part2 = imm32 - (part1 << shift);
     
     /* mov reg, part1 */
     exp.code[0] = 0x48; exp.code[1] = 0xC7;
@@ -424,7 +440,8 @@ static expansion_t shift_add(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
 static expansion_t imm_to_not(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
     expansion_t exp = {0};
     
-    if (imm > 0xFFFFFFFF) {
+    /* Only handle 32-bit values */
+    if (imm > 0x7FFFFFFF) {
         exp.valid = false;
         return exp;
     }
@@ -432,7 +449,7 @@ static expansion_t imm_to_not(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
     /* mov reg, ~imm */
     exp.code[0] = 0x48; exp.code[1] = 0xC7;
     exp.code[2] = 0xC0 | reg;
-    *(uint32_t*)(exp.code + 3) = ~(uint32_t)imm;
+    *(int32_t*)(exp.code + 3) = ~(int32_t)imm;
     
     /* not reg */
     exp.code[7] = 0x48; exp.code[8] = 0xF7;
@@ -447,17 +464,19 @@ static expansion_t imm_to_not(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
 static expansion_t xor_key(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
     expansion_t exp = {0};
     
-    if (imm > 0xFFFFFFFF) {
+    /* Only handle 32-bit values */
+    if (imm > 0x7FFFFFFF) {
         exp.valid = false;
         return exp;
     }
     
     uint32_t key = chacha20_random(rng);
+    uint32_t imm32 = (uint32_t)imm;
     
     /* mov reg, imm^key */
     exp.code[0] = 0x48; exp.code[1] = 0xC7;
     exp.code[2] = 0xC0 | reg;
-    *(uint32_t*)(exp.code + 3) = (uint32_t)imm ^ key;
+    *(uint32_t*)(exp.code + 3) = imm32 ^ key;
     
     /* xor reg, key */
     exp.code[7] = 0x48; exp.code[8] = 0x81;
@@ -473,7 +492,14 @@ static expansion_t xor_key(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
 static expansion_t imm_to_neg(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
     expansion_t exp = {0};
     
-    if (imm == 0 || imm > 0x7FFFFFFF || imm == 0x80000000) {
+    /* Only handle positive 32-bit values that can be negated */
+    if (imm == 0 || imm > 0x7FFFFFFF) {
+        exp.valid = false;
+        return exp;
+    }
+    
+    int32_t imm32 = (int32_t)imm;
+    if (imm32 == INT32_MIN) {
         exp.valid = false;
         return exp;
     }
@@ -481,7 +507,7 @@ static expansion_t imm_to_neg(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
     /* mov reg, -imm */
     exp.code[0] = 0x48; exp.code[1] = 0xC7;
     exp.code[2] = 0xC0 | reg;
-    *(int32_t*)(exp.code + 3) = -(int32_t)imm;
+    *(int32_t*)(exp.code + 3) = -imm32;
     
     /* neg reg */
     exp.code[7] = 0x48; exp.code[8] = 0xF7;
@@ -496,15 +522,18 @@ static expansion_t imm_to_neg(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
 static expansion_t mul_shr(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
     expansion_t exp = {0};
     
-    if (imm == 0 || imm > 0x7FFFFFFF) {
+    /* Only handle values that won't overflow when doubled */
+    if (imm == 0 || imm > 0x3FFFFFFF) {
         exp.valid = false;
         return exp;
     }
     
+    uint32_t imm32 = (uint32_t)imm;
+    
     /* mov reg, imm*2 */
     exp.code[0] = 0x48; exp.code[1] = 0xC7;
     exp.code[2] = 0xC0 | reg;
-    *(uint32_t*)(exp.code + 3) = (uint32_t)imm * 2;
+    *(uint32_t*)(exp.code + 3) = imm32 * 2;
     
     /* shr reg, 1 */
     exp.code[7] = 0x48; exp.code[8] = 0xD1;
@@ -519,15 +548,18 @@ static expansion_t mul_shr(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
 static expansion_t mov_imm(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
     expansion_t exp = {0};
     
-    if (imm == 0 || imm > 0xFFFFFFFF) {
+    /* Only handle 32-bit values */
+    if (imm == 0 || imm > 0x7FFFFFFF) {
         exp.valid = false;
         return exp;
     }
     
+    uint32_t imm32 = (uint32_t)imm;
+    
     /* Strategy: imm = (a + b) * c + d */
     uint32_t c = 2 + (chacha20_random(rng) % 3);  /* 2-4 */
-    uint32_t d = (uint32_t)imm % c;
-    uint32_t temp = ((uint32_t)imm - d) / c;
+    uint32_t d = imm32 % c;
+    uint32_t temp = (imm32 - d) / c;
     uint32_t a = temp / 2;
     uint32_t b = temp - a;
     
@@ -566,10 +598,17 @@ static expansion_t mov_imm(uint8_t reg, uint64_t imm, chacha_state_t *rng) {
 
 /* Main dispatcher for x86 expansions */
 expansion_t expand_instruction(const x86_inst_t *inst, liveness_state_t *liveness, 
-                                size_t offset, chacha_state_t *rng) {
+                                size_t offset, chacha_state_t *rng,
+                                uint8_t *code, size_t code_size) {
     expansion_t exp = {0};
     
     if (!inst || !inst->valid || !rng) {
+        exp.valid = false;
+        return exp;
+    }
+    
+    /* Don't expand SIMD/MMX/SSE/AVX */
+    if (inst->is_simd || inst->vex || inst->evex) {
         exp.valid = false;
         return exp;
     }
@@ -594,6 +633,12 @@ expansion_t expand_instruction(const x86_inst_t *inst, liveness_state_t *livenes
     if ((op & 0xF8) == 0xB8) {
         uint8_t reg = op & 0x7;
         uint64_t imm = inst->imm;
+        
+        /* Usually must be preserved exactly */
+        if (imm > 0x7FFFFFFF && imm < 0xFFFFFFFF80000000ULL) {
+            exp.valid = false;
+            return exp;
+        }
         
         if (imm == 0) {
             return zero_reg(reg, rng);
@@ -639,7 +684,7 @@ expansion_t expand_instruction(const x86_inst_t *inst, liveness_state_t *livenes
         }
     }
     
-    /* ADD reg, imm (all small values) */
+    /* ADD reg, imm (all small) */
     if (op == 0x83 && inst->has_modrm) {
         uint8_t modrm_reg_field = modrm_reg(inst->modrm);
         if (modrm_reg_field == 0) {  /* ADD operation */
@@ -647,19 +692,118 @@ expansion_t expand_instruction(const x86_inst_t *inst, liveness_state_t *livenes
             uint8_t mod = (inst->modrm >> 6) & 3;
             
             if (mod == 3 && inst->imm > 0 && inst->imm <= 15) {
-                /* Try both expansions, prefer the larger one */
-                expansion_t inc_chain = to_inc_chain(reg, (uint8_t)inst->imm, rng);
-                expansion_t lea_exp = to_lea(reg, (int32_t)inst->imm, rng);
+                bool next_uses_carry = false;
                 
-                /* Prefer INC chain for size increase */
-                if (inc_chain.valid && inc_chain.len > inst->len) {
-                    return inc_chain;
+                if (code && code_size > 0) {
+                    size_t scan_offset = offset + inst->len;
+                    int lookahead = 5;
+                    
+                    while (lookahead > 0 && scan_offset < code_size && !next_uses_carry) {
+                        x86_inst_t scan_inst;
+                        if (!decode_x86_withme(code + scan_offset, code_size - scan_offset, 
+                                              0, &scan_inst, NULL) || !scan_inst.valid) {
+                            break;
+                        }
+                        
+                        uint8_t op = scan_inst.opcode[0];
+                        
+                        /* ADC */
+                        if ((op >= 0x10 && op <= 0x15) || 
+                            (op >= 0x80 && op <= 0x83 && scan_inst.has_modrm && 
+                             modrm_reg(scan_inst.modrm) == 2)) {
+                            next_uses_carry = true;
+                            break;
+                        }
+                        
+                        /* SBB */
+                        if ((op >= 0x18 && op <= 0x1D) || 
+                            (op >= 0x80 && op <= 0x83 && scan_inst.has_modrm && 
+                             modrm_reg(scan_inst.modrm) == 3)) {
+                            next_uses_carry = true;
+                            break;
+                        }
+                        
+                        /* RCL/RCR */
+                        if ((op >= 0xC0 && op <= 0xC1) || (op >= 0xD0 && op <= 0xD3)) {
+                            if (scan_inst.has_modrm) {
+                                uint8_t reg_field = modrm_reg(scan_inst.modrm);
+                                if (reg_field == 2 || reg_field == 3) {
+                                    next_uses_carry = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (op == 0x72 || op == 0x73) {
+                            next_uses_carry = true;
+                            break;
+                        }
+                        if (scan_inst.opcode_len >= 2 && op == 0x0F) {
+                            uint8_t op2 = scan_inst.opcode[1];
+                            if (op2 == 0x82 || op2 == 0x83) {
+                                next_uses_carry = true;
+                                break;
+                            }
+                            /* SETC/SETNC */
+                            if (op2 == 0x92 || op2 == 0x93) {
+                                next_uses_carry = true;
+                                break;
+                            }
+                            /* CMOVC/CMOVNC */
+                            if (op2 == 0x42 || op2 == 0x43) {
+                                next_uses_carry = true;
+                                break;
+                            }
+                        }
+                        
+                        if (op == 0x9F || op == 0x9C) {
+                            next_uses_carry = true;
+                            break;
+                        }
+                        
+                        bool clobbers_cf = false;
+
+                        if ((op >= 0x00 && op <= 0x05) ||  /* ADD */
+                            (op >= 0x28 && op <= 0x2D) ||  /* SUB */
+                            (op >= 0x38 && op <= 0x3D) ||  /* CMP */
+                            (op >= 0x80 && op <= 0x83 && scan_inst.has_modrm &&
+                             (modrm_reg(scan_inst.modrm) == 0 ||  /* ADD */
+                              modrm_reg(scan_inst.modrm) == 5 ||  /* SUB */
+                              modrm_reg(scan_inst.modrm) == 7))) { /* CMP */
+                            clobbers_cf = true;
+                        }
+                        
+                        if ((op >= 0x08 && op <= 0x0D) ||  /* OR */
+                            (op >= 0x20 && op <= 0x25) ||  /* AND */
+                            (op >= 0x30 && op <= 0x35) ||  /* XOR */
+                            (op >= 0x84 && op <= 0x85) ||  /* TEST */
+                            (op >= 0xA8 && op <= 0xA9)) {  /* TEST */
+                            clobbers_cf = true;
+                        }
+                        
+                        if ((op >= 0xC0 && op <= 0xC1) || (op >= 0xD0 && op <= 0xD3) ||
+                            op == 0x9E || op == 0x9D) {
+                            clobbers_cf = true;
+                            break;
+                        }
+
+                        scan_offset += scan_inst.len;
+                        lookahead--;
+                    }
                 }
+                
+                expansion_t lea_exp = to_lea(reg, (int32_t)inst->imm, rng);
+                if (!next_uses_carry) {
+                    expansion_t inc_chain = to_inc_chain(reg, (uint8_t)inst->imm, rng);
+                    if (inc_chain.valid && inc_chain.len > inst->len) {
+                        return inc_chain;
+                    }
+                } else {
+                    DBG("[Expand] Skipping INC chain \n");
+                }
+                
                 if (lea_exp.valid) {
                     return lea_exp;
-                }
-                if (inc_chain.valid) {
-                    return inc_chain;
                 }
             }
         }
@@ -805,10 +949,11 @@ expansion_t expand_instruction(const x86_inst_t *inst, liveness_state_t *livenes
 
 bool apply_expansion(uint8_t *code, size_t *size, size_t offset, 
                      const x86_inst_t *inst, liveness_state_t *liveness,
-                     chacha_state_t *rng) {
+                     chacha_state_t *rng, reloc_table_t *reloc_table,
+                     uint64_t base_addr) {
     if (!code || !size || !inst || !rng) return false;
     
-    expansion_t exp = expand_instruction(inst, liveness, offset, rng);
+    expansion_t exp = expand_instruction(inst, liveness, offset, rng, code, *size);
     if (!exp.valid || exp.len == 0) return false;
     
     /* Check if expansion fits */
@@ -817,24 +962,97 @@ bool apply_expansion(uint8_t *code, size_t *size, size_t offset,
         return false;
     }
     
-    /* Don't expand if it would shift code and break control flow */
-    /* Only allow expansion if: */
-    /* 1. Replacement (same size), OR */
-    /* 2. We're near the end of the code (last 10%) */
     if (exp.len > inst->len) {
-        size_t safe_zone = *size * 9 / 10;  /* Last 10% is cool */
-        if (offset < safe_zone) {
-            /* Expansion in the middle would shift code and break branches */
+        size_t sf_zn = *size * 9 / 10; 
+        
+        if (reloc_table && base_addr != 0) {
+        } else if (offset < sf_zn) { 
             return false;
+        }
+        
+        size_t scan_window = 128;
+        size_t scan_end = (offset + scan_window < *size) ? offset + scan_window : *size;
+        
+        for (size_t scan_off = offset; scan_off < scan_end; ) {
+            x86_inst_t scan_inst;
+            if (!decode_x86_withme(code + scan_off, *size - scan_off, 0, &scan_inst, NULL) ||
+                !scan_inst.valid || scan_inst.len == 0) {
+                scan_off++;
+                continue;
+            }
+            
+            if (scan_inst.rip_relative) {
+                /* Found RIP-relative instruction nearby? don't expand */
+                return false;
+            }
+            
+            if (scan_inst.has_modrm) {
+                uint8_t mod = (scan_inst.modrm >> 6) & 3;
+                uint8_t rm = scan_inst.modrm & 7;
+                if (mod == 0 && rm == 5) {
+                    /* This is RIP-relative [rip+disp32] */
+                    return false;
+                }
+            }
+            
+            scan_off += scan_inst.len;
         }
     }
     
-    /* Make room for expansion if needed */
     if (exp.len > inst->len) {
+        /* Check if THIS instruction is RIP-relative */
+        if (inst->rip_relative || (inst->has_modrm && 
+            ((inst->modrm >> 6) & 3) == 0 && (inst->modrm & 7) == 5)) {
+            DBG("[Expand] Refusing to expand RIP-relative instruction at 0x%zx\n", offset);
+            return false;
+        }
+        
+        /* Check nearby instructions for RIP-relative addressing */
+        size_t scan_window = 128;
+        size_t scan_start = (offset > scan_window) ? offset - scan_window : 0;
+        size_t scan_end = (offset + scan_window < *size) ? offset + scan_window : *size;
+        
+        for (size_t scan_off = scan_start; scan_off < scan_end; ) {
+            if (scan_off == offset) {
+                scan_off += inst->len;
+                continue;
+            }
+            
+            x86_inst_t scan_inst;
+            if (!decode_x86_withme(code + scan_off, *size - scan_off, 0, &scan_inst, NULL) ||
+                !scan_inst.valid || scan_inst.len == 0) {
+                scan_off++;
+                continue;
+            }
+            
+            /* Check if this instruction is RIP-relative */
+            if (scan_inst.rip_relative || (scan_inst.has_modrm && 
+                ((scan_inst.modrm >> 6) & 3) == 0 && (scan_inst.modrm & 7) == 5)) {
+                
+                /* If we have a relocation table, we can fix it up */
+                if (reloc_table && base_addr != 0) {
+                    DBG("[Expand] RIP-relative at 0x%zx will be fixed by relocation table\n", scan_off);
+                } else {
+                    /* No relocation table - refuse to expand */
+                    DBG("[Expand] Refusing expansion - RIP-relative at 0x%zx would break\n", scan_off);
+                    return false;
+                }
+            }
+            
+            scan_off += scan_inst.len;
+        }
+        
+        /* to expand get a room */
         memmove(code + offset + exp.len, 
                 code + offset + inst->len,
                 *size - offset - inst->len);
         *size += size_diff;
+        
+        /* Update relocation table if provided */
+        if (reloc_table && base_addr != 0) {
+            reloc_update(reloc_table, offset + inst->len, 
+                        size_diff, code, *size, base_addr, ARCH_X86);
+        }
     } else if (exp.len < inst->len) {
         /* Shrinking - fill with NOPs */
         size_t nop_count = inst->len - exp.len;
@@ -855,6 +1073,8 @@ bool apply_expansion(uint8_t *code, size_t *size, size_t offset,
                     code + offset + exp.len,
                     *size - offset - exp.len);
             *size -= size_diff;
+            
+            /* Rollback relocation updates, this is tricky, so we just rebuild later */
         }
         return false;
     }
@@ -864,7 +1084,8 @@ bool apply_expansion(uint8_t *code, size_t *size, size_t offset,
 
 size_t expand_code(uint8_t *code, size_t size, size_t max_size,
                             liveness_state_t *liveness, chacha_state_t *rng,
-                            unsigned expansion_intensity) {
+                            unsigned expansion_intensity, reloc_table_t *reloc_table,
+                            uint64_t base_addr) {
     if (!code || size == 0 || !rng) return size;
     
     size_t current_size = size;
@@ -880,7 +1101,8 @@ size_t expand_code(uint8_t *code, size_t size, size_t max_size,
         
         /* Randomly decide whether to expand this instruction */
         if ((chacha20_random(rng) % 100) < expansion_intensity) {
-            if (apply_expansion(code, &current_size, offset, &inst, liveness, rng)) {
+            if (apply_expansion(code, &current_size, offset, &inst, liveness, rng,
+                              reloc_table, base_addr)) {
                 /* Expansion applied, re-decode to get new length */
                 x86_inst_t new_inst;
                 if (decode_x86_withme(code + offset, current_size - offset, 0, &new_inst, NULL)) {
@@ -899,7 +1121,8 @@ size_t expand_code(uint8_t *code, size_t size, size_t max_size,
 /* 3xpand, then expand the expanded code again */
 size_t expand_chains(uint8_t *code, size_t size, size_t max_size,
                           liveness_state_t *liveness, chacha_state_t *rng,
-                          unsigned chain_depth, unsigned expansion_intensity) {
+                          unsigned chain_depth, unsigned expansion_intensity,
+                          reloc_table_t *reloc_table, uint64_t base_addr) {
     if (!code || size == 0 || !rng || chain_depth == 0) return size;
     
     size_t current_size = size;
@@ -925,13 +1148,14 @@ size_t expand_chains(uint8_t *code, size_t size, size_t max_size,
             if ((chacha20_random(rng) % 100) < round_intensity) {
                 size_t pre_expand_size = current_size;
                 
-                if (apply_expansion(code, &current_size, offset, &inst, liveness, rng)) {
+                if (apply_expansion(code, &current_size, offset, &inst, liveness, rng,
+                                  reloc_table, base_addr)) {
                     /* Expansion succeeded - re-decode to get new length */
                     x86_inst_t new_inst;
                     if (decode_x86_withme(code + offset, current_size - offset, 0, &new_inst, NULL)) {
                         offset += new_inst.len;
                         
-                        /* Safety check: prevent runaway expansion */
+                        /* Can't have this */
                         if (current_size > pre_expand_size + 100) {
                             current_size = pre_expand_size;
                             break;
@@ -975,7 +1199,7 @@ size_t mov_immediates(uint8_t *code, size_t size, size_t max_size,
             
             /* Target MOV reg, imm instructions */
             if ((inst.opcode[0] & 0xF8) == 0xB8 && inst.imm != 0) {
-                if (apply_expansion(code, &current_size, offset, &inst, liveness, rng)) {
+                if (apply_expansion(code, &current_size, offset, &inst, liveness, rng, NULL, 0)) {
                     expanded_any = true;
                     
                     /* Re-decode to get new length */
@@ -1035,7 +1259,7 @@ size_t expand_arithmetic(uint8_t *code, size_t size, size_t max_size,
             }
             
             if (is_arithmetic) {
-                if (apply_expansion(code, &current_size, offset, &inst, liveness, rng)) {
+                if (apply_expansion(code, &current_size, offset, &inst, liveness, rng, NULL, 0)) {
                     expanded_any = true;
                     
                     x86_inst_t new_inst;
