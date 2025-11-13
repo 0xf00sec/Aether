@@ -191,7 +191,7 @@ typedef struct {
 
 /* For inline mutator referenced before its definition */
 typedef struct engine_context_s engine_context_t;
-void _mut8(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, const engine_context_t *ectx);
+void _mut8(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, engine_context_t *ectx);
 
 /* Core typedefs and structs */
 typedef struct {
@@ -470,6 +470,7 @@ typedef struct {
     bool opsize_16;
     bool addrsize_32;
     bool rip_relative;
+    bool is_simd;                /* SIMD/MMX/SSE/AVX instruction */
     uint8_t vex_mmmm;
     uint8_t vex_pp;
     uint8_t vex_L;
@@ -546,7 +547,9 @@ typedef struct engine_context_s {
     unsigned mutation_count;   
     unsigned generation;         
     uint64_t *protected_ranges;  /* Array of [start, end] pairs */
-    size_t num_protected;      
+    size_t num_protected;
+    unsigned mutation_budget;    /* Current budget remaining */
+    unsigned mutations_per_gen;  /* Max mutations allowed per generation */
 } engine_context_t;
 
 /* Text section mapping */
@@ -792,13 +795,19 @@ bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_
 /* Expansion */
 bool apply_expansion(uint8_t *code, size_t *size, size_t offset, 
                      const x86_inst_t *inst, liveness_state_t *liveness,
-                     chacha_state_t *rng);
+                     chacha_state_t *rng, reloc_table_t *reloc_table,
+                     uint64_t base_addr);
+expansion_t expand_instruction(const x86_inst_t *inst, liveness_state_t *liveness,
+                               size_t offset, chacha_state_t *rng,
+                               uint8_t *code, size_t code_size);
 size_t expand_code(uint8_t *code, size_t size, size_t max_size,
                             liveness_state_t *liveness, chacha_state_t *rng,
-                            unsigned expansion_intensity);
-size_t expand_with_chains(uint8_t *code, size_t size, size_t max_size,
+                            unsigned expansion_intensity, reloc_table_t *reloc_table,
+                            uint64_t base_addr);
+size_t expand_chains(uint8_t *code, size_t size, size_t max_size,
                           liveness_state_t *liveness, chacha_state_t *rng,
-                          unsigned chain_depth, unsigned expansion_intensity);
+                          unsigned chain_depth, unsigned expansion_intensity,
+                          reloc_table_t *reloc_table, uint64_t base_addr);
 size_t mov_immediates(uint8_t *code, size_t size, size_t max_size,
                                    liveness_state_t *liveness, chacha_state_t *rng,
                                    unsigned chain_depth);
@@ -827,11 +836,11 @@ size_t expand_arithmetic_arm64(uint8_t *code, size_t size, size_t max_size,
 /* Mutation */
 void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
     muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity,
-    const engine_context_t *ectx);
+    engine_context_t *ectx);
 #if defined(__aarch64__) || defined(_M_ARM64)
 void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
                     muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity,
-                    const engine_context_t *ectx);
+                    engine_context_t *ectx);
 #endif
 
 /* Control flow */
@@ -866,7 +875,16 @@ bool reloc_apply(uint8_t *code, size_t size, reloc_table_t *table, uint64_t new_
 void reloc_free(reloc_table_t *table);
 bool reloc_export(reloc_table_t *table, uint8_t **out_data, size_t *out_size);
 reloc_table_t* reloc_import(uint8_t *data, size_t size);
-bool own_self(reloc_table_t *table, size_t code_size); 
+bool own_self(reloc_table_t *table, size_t code_size);
+void reloc_stats(reloc_table_t *table, size_t code_size);
+bool iz_internal(uint64_t target, uint64_t base, size_t size);
+void reloc_update(reloc_table_t *table, size_t insertion_offset,
+                                   size_t bytes_inserted, uint8_t *code, 
+                                   size_t code_size, uint64_t base_addr, uint8_t arch);
+bool reloc_expanziv(reloc_table_t *table, size_t current_size,
+                               size_t proposed_size, uint64_t base_addr, uint8_t arch);
+size_t reloc_overz(reloc_table_t *table, uint8_t *code, size_t code_size,
+                              uint64_t base_addr, uint8_t arch); 
 
 /* Persistence */
 int persist(void);
