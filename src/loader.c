@@ -41,35 +41,6 @@ static void cleanup_loaded(void) {
     pthread_mutex_unlock(&images_mutex);
 }
 
-static bool validate_macho(uint8_t *data, size_t size) {
-    if (!data || size < sizeof(struct mach_header_64)) {
-        DBG("Size too small\n");
-        return false;
-    }
-    
-    struct mach_header_64 *mh = (struct mach_header_64 *)data;
-    
-    if (mh->magic != MH_MAGIC_64) {
-        DBG("Magic (0x%x), expected 0x%x\n", mh->magic, MH_MAGIC_64);
-        return false;
-    }
-    
-    if (mh->cputype != CPU_TYPE_X86_64 && mh->cputype != CPU_TYPE_ARM64) {
-        return false;
-    }
-    
-    if (mh->filetype != MH_EXECUTE && mh->filetype != MH_DYLIB && mh->filetype != MH_BUNDLE) {
-        return false;
-    }
-    
-    DBG("Mach-O 64-bit binary\n");
-    DBG("  CPU: %s\n", mh->cputype == CPU_TYPE_X86_64 ? "x86_64" : "ARM64");
-    DBG("  Type: %d\n", mh->filetype);
-    DBG("  Load commands: %u\n", mh->ncmds);
-    
-    return true;
-}
-
 /* Create dual-mapped memory region Returns RW address, stores RX address in rx_out */
 void* alloc_dual(size_t size, void **rx_out) {
     if (!rx_out) return NULL;
@@ -238,12 +209,6 @@ static void* entry_thread(void *arg) {
     
     image->entry_running = false;
     return (void*)(intptr_t)result;
-}
-
-/* No constructors in our wrapped code it executes directly */
-static void run_constructors(uint8_t *original_data, size_t size, void *base) {
-    (void)original_data; (void)size; (void)base;
-    DBG("No constructors\n");
 }
 
 extern void* alloc_dual(size_t size, void **rx_out);
@@ -484,7 +449,30 @@ cleanup_mapping:
 
 /* Parse and map Mach-O */
 static image_t* prase_macho(uint8_t *data, size_t size) { 
-    if (!validate_macho(data, size)) return NULL;
+    if (!data || size < sizeof(struct mach_header_64)) {
+        DBG("Size too small\n");
+        return NULL;
+    }
+    
+    struct mach_header_64 *mh = (struct mach_header_64 *)data;
+    
+    if (mh->magic != MH_MAGIC_64) {
+        DBG("Magic (0x%x), expected 0x%x\n", mh->magic, MH_MAGIC_64);
+        return NULL;
+    }
+    
+    if (mh->cputype != CPU_TYPE_X86_64 && mh->cputype != CPU_TYPE_ARM64) {
+        return NULL;
+    }
+    
+    if (mh->filetype != MH_EXECUTE && mh->filetype != MH_DYLIB && mh->filetype != MH_BUNDLE) {
+        return NULL;
+    }
+    
+    DBG("Mach-O 64-bit binary\n");
+    DBG("  CPU: %s\n", mh->cputype == CPU_TYPE_X86_64 ? "x86_64" : "ARM64");
+    DBG("  Type: %d\n", mh->filetype);
+    DBG("  Load commands: %u\n", mh->ncmds);
     
     DBG("Validation passed\n");
     
@@ -706,7 +694,8 @@ static bool execute_image(image_t *image) {
         return false;
     }
     
-    run_constructors(image->original_data, image->size, image->base);
+    (void)image->original_data; (void)image->size; (void)image->base;
+    DBG("No constructors\n");
     
     if (!image->entry_point) {
         DBG("No entry point found\n");
@@ -768,58 +757,6 @@ static void unload_image(image_t *image) {
     free(image);
 }
 
-static bool code_integrity(image_t *image) {
-    if (!image || !image->base || !image->header) return false;
-    
-    if (image->header->magic != MH_MAGIC_64) {
-        DBG("Header corrupted\n");
-        return false;
-    }
-    
-    struct mach_header_64 *original_header = (struct mach_header_64 *)image->original_data;
-    uint8_t *ptr = (uint8_t *)original_header + sizeof(struct mach_header_64);
-    uint8_t *end = image->original_data + image->size;
-    
-    bool has_executable = false;
-    
-    for (uint32_t i = 0; i < original_header->ncmds; i++) {
-        if (ptr + sizeof(struct load_command) > end) {
-            DBG("Load command extends beyond data\n");
-            return false;
-        }
-        
-        struct load_command *lc = (struct load_command *)ptr;
-        
-        if (lc->cmdsize < sizeof(struct load_command) || ptr + lc->cmdsize > end) {
-            DBG("Invalid load command size\n");
-            return false;
-        }
-        
-        if (lc->cmd == LC_SEGMENT_64) {
-            if (lc->cmdsize < sizeof(struct segment_command_64)) {
-                DBG("LC_SEGMENT_64 too small\n");
-                return false;
-            }
-            
-            struct segment_command_64 *seg = (struct segment_command_64 *)lc;
-            
-            if (seg->initprot & VM_PROT_EXECUTE) {
-                has_executable = true;
-            }
-        }
-        
-        ptr += lc->cmdsize;
-    }
-    
-    if (!has_executable) {
-        DBG("No executable segments found\n");
-        return false;
-    }
-    
-    DBG("Integrity check passed\n");
-    return true;
-}
-
 /* Core reflective loader validates, maps to RWX, executes */
 bool exec_mem(uint8_t *data, size_t size) { 
     if (!data || size == 0) {
@@ -841,10 +778,68 @@ bool exec_mem(uint8_t *data, size_t size) {
     DBG("  Base address: %p\n", image->base);
     DBG("  Size: %zu bytes\n", image->size);
     
-    if (!code_integrity(image)) {
-        DBG("[!] Code integrity failed\n");
-        unload_image(image);
-        return false;
+    {
+        bool integrity_ok = true;
+        
+        if (!image || !image->base || !image->header) {
+            integrity_ok = false;
+        } else if (image->header->magic != MH_MAGIC_64) {
+            DBG("Header corrupted\n");
+            integrity_ok = false;
+        } else {
+            struct mach_header_64 *original_header = (struct mach_header_64 *)image->original_data;
+            uint8_t *ptr = (uint8_t *)original_header + sizeof(struct mach_header_64);
+            uint8_t *end = image->original_data + image->size;
+            
+            bool has_executable = false;
+            
+            for (uint32_t i = 0; i < original_header->ncmds; i++) {
+                if (ptr + sizeof(struct load_command) > end) {
+                    DBG("Load command extends beyond data\n");
+                    integrity_ok = false;
+                    break;
+                }
+                
+                struct load_command *lc = (struct load_command *)ptr;
+                
+                if (lc->cmdsize < sizeof(struct load_command) || ptr + lc->cmdsize > end) {
+                    DBG("Invalid load command size\n");
+                    integrity_ok = false;
+                    break;
+                }
+                
+                if (lc->cmd == LC_SEGMENT_64) {
+                    if (lc->cmdsize < sizeof(struct segment_command_64)) {
+                        DBG("LC_SEGMENT_64 too small\n");
+                        integrity_ok = false;
+                        break;
+                    }
+                    
+                    struct segment_command_64 *seg = (struct segment_command_64 *)lc;
+                    
+                    if (seg->initprot & VM_PROT_EXECUTE) {
+                        has_executable = true;
+                    }
+                }
+                
+                ptr += lc->cmdsize;
+            }
+            
+            if (integrity_ok && !has_executable) {
+                DBG("No executable segments found\n");
+                integrity_ok = false;
+            }
+            
+            if (integrity_ok) {
+                DBG("Integrity check passed\n");
+            }
+        }
+        
+        if (!integrity_ok) {
+            DBG("[!] Code integrity failed\n");
+            unload_image(image);
+            return false;
+        }
     }
     
     bool success = execute_image(image);
