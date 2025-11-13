@@ -87,6 +87,32 @@ static bool parse_vex_evex(x86_inst_t *inst, const uint8_t **p, const uint8_t *e
     return false;
 }
 
+/* Is this a SIMD/MMX instruction? */
+static bool is_simd(uint8_t op0, uint8_t op1, bool has_legacy_prefix) {
+    if (op0 != 0x0F) return false;
+    
+    /* MMX/SSE moves */
+    if (op1 == 0x6E || op1 == 0x7E) return true;  
+    if (op1 == 0x6F || op1 == 0x7F) return true; 
+    
+    /* SSE/SSE2 moves and operations */
+    if ((op1 & 0xF0) == 0x10) return true; 
+    if ((op1 & 0xF0) == 0x20) return true; 
+    if ((op1 & 0xF0) == 0x50) return true;  
+    if ((op1 & 0xF0) == 0x60) return true; 
+    if ((op1 & 0xF0) == 0x70) return true;  
+    if ((op1 & 0xF0) == 0xD0) return true; 
+    if ((op1 & 0xF0) == 0xE0) return true; 
+    if ((op1 & 0xF0) == 0xF0) return true; 
+    
+    /* SSE comparison and shuffle */
+    if (op1 == 0xC2) return true;  /* CMPPS, CMPPD, CMPSS, CMPSD */
+    if (op1 == 0xC6) return true;  /* SHUFPS, SHUFPD */
+    
+    (void)has_legacy_prefix;  /* May use this later for prefix-specific detection */
+    return false;
+}
+
 /* Does this instruction modify RIP? */
 static bool is_cflow(uint8_t op0, uint8_t op1, bool has_modrm, uint8_t modrm) {
     if (op0 == 0xC3 || op0 == 0xCB || op0 == 0xC2 || op0 == 0xCA) return true;
@@ -106,6 +132,19 @@ static bool needs_modrm(uint8_t op0, uint8_t op1) {
     if (op0 == 0x0F) {
         if ((op1 & 0xF0) == 0x10 || (op1 & 0xF0) == 0x20 || (op1 & 0xF0) == 0x28 ||
             (op1 & 0xF0) == 0x38 || (op1 & 0xF0) == 0x3A) return true;
+        if ((op1 & 0xF0) == 0x60 || (op1 & 0xF0) == 0x70) return true;
+        if (op1 == 0x6F || op1 == 0x7F) return true;  
+        if (op1 == 0x6E || op1 == 0x7E) return true;  /* MOVD */
+        if ((op1 & 0xF0) == 0xD0 || (op1 & 0xF0) == 0xE0 || (op1 & 0xF0) == 0xF0) return true; 
+        if (op1 == 0xAE || op1 == 0xAF) return true;  /* FXSAVE, IMUL */
+        if (op1 == 0xB6 || op1 == 0xB7 || op1 == 0xBE || op1 == 0xBF) return true;  /* MOVZX, MOVSX */
+        if (op1 == 0xC2 || op1 == 0xC4 || op1 == 0xC5 || op1 == 0xC6) return true;  /* CMP*, PINSRW, SHUFPS */
+        /* Bit instructions */
+        if (op1 == 0xA3 || op1 == 0xAB || op1 == 0xB3 || op1 == 0xBB) return true;  /* BT, BTS, BTR, BTC */
+        if (op1 == 0xBA) return true;  
+        if (op1 == 0xBC || op1 == 0xBD) return true;  /* BSF, BSR */
+        /* arithmetic */
+        if (op1 == 0xA4 || op1 == 0xA5 || op1 == 0xAC || op1 == 0xAD) return true;  /* SHLD, SHRD */
     }
     if ((op0 >= 0x88 && op0 <= 0x8E) || op0 == 0x8F) return true;
     if (op0 == 0x01 || op0 == 0x03 || op0 == 0x29 || op0 == 0x2B ||
@@ -160,12 +199,9 @@ static uint8_t imm_size_for(uint8_t op0, uint8_t op1, bool rex_w, bool opsz16) {
             return 2;
             
         default:
-             
             if (op0 == 0x0F) {
                 if (op1 >= 0x80 && op1 <= 0x8F) return 4;  
-            }
-            
-             
+            }             
             if ((op0 >= 0x70 && op0 <= 0x7F) ||  
                 (op0 >= 0xE0 && op0 <= 0xE3)) {  
                 return 1;
@@ -267,7 +303,7 @@ static void parse_ea_and_disp(x86_inst_t *inst, const uint8_t **p, const uint8_t
 }
 
 /**
- * Handles all the x86 complexity: legacy prefixes, REX, VEX/EVEX,
+ * Legacy prefixes, REX, VEX/EVEX,
  * ModR/M, SIB, displacements, immediates, RIP-relative addressing.
  * Max 4 legacy prefixes, max 15 bytes total per Intel spec.
  */
@@ -384,6 +420,9 @@ bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_
     inst->seg = seg_override;
     inst->opsize_16 = opsz16;
     inst->addrsize_32 = addrsz32;
+    
+    /* Mark SIMD instructions */
+    inst->is_simd = inst->vex || inst->evex || is_simd(inst->opcode[0], inst->opcode[1], opsz16 || have_rep || have_repne);
 
      
     resolve_target(inst, ip);
