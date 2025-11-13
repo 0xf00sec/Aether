@@ -644,24 +644,43 @@ bool apply_arm64(uint8_t *code, size_t *size, size_t max_size,
     
     /* Can't expand if it would shift code and break control flow */
     /* ARM64 branches use PC-relative offsets that would become invalid */
-    /* Only allow if: 
-     1. Replacement (same size), OR 
-     2. We're near the end of the code (last 20% for small, 10% for large)
-    */
     if (exp.len > 4) {
-        size_t safe_zone;
-        
-        /* For larger expansions (>8 bytes), use stricter zone (last 10%) */
+        size_t cool_zn;
         if (exp.len > 8) {
-            safe_zone = *size * 9 / 10;
+            cool_zn = *size * 9 / 10;
         } else {
-            /* For small expansions (4->8 bytes), more permissive (last 20%) */
-            safe_zone = *size * 4 / 5;
+            cool_zn = *size * 4 / 5; 
         }
         
         /* If we're not in the safe zone, reject expansion */
-        if (offset < safe_zone) {
+        if (offset < cool_zn) {
             return false;
+        }
+        size_t scan_window = 128;
+        size_t scan_end = (offset + scan_window < *size) ? offset + scan_window : *size;
+        
+        for (size_t scan_off = offset; scan_off + 4 <= scan_end; scan_off += 4) {
+            arm64_inst_t scan_inst;
+            if (!decode_arm64(code + scan_off, &scan_inst) || !scan_inst.valid) {
+                continue;
+            }
+            
+            /* Check for PC-relative instructions */
+            if (scan_inst.type == ARM_OP_BRANCH || 
+                scan_inst.type == ARM_OP_BRANCH_LINK ||
+                scan_inst.type == ARM_OP_BRANCH_COND ||
+                scan_inst.type == ARM_OP_CBZ ||
+                scan_inst.type == ARM_OP_CBNZ ||
+                scan_inst.type == ARM_OP_TBZ ||
+                scan_inst.type == ARM_OP_TBNZ ||
+                scan_inst.type == ARM_OP_ADRP ||
+                scan_inst.type == ARM_OP_ADR) {
+                return false;
+            }
+            uint32_t raw = scan_inst.raw;
+            if ((raw & 0x3B000000) == 0x18000000) {
+                return false;
+            }
         }
     }
     
