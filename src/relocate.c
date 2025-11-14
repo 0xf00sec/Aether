@@ -398,66 +398,45 @@ static bool code_addr(uint64_t imm, uint64_t base_addr, size_t size) {
     return false;
 }
 
-/* Scan jump table data for address entries
- * Supports both 8-byte absolute addresses and 4-byte relative offsets
- */
+/* Jump table scan */
 static void jump_table(uint8_t *code, size_t size, size_t table_offset,
-                           uint64_t base_addr, reloc_table_t *table) {
+                       uint64_t base_addr, reloc_table_t *table) {
     if (!code || !table || table_offset >= size) return;
-    
+
     const size_t max_entries = 64;
     size_t entries_found_abs = 0;
     size_t entries_found_rel = 0;
-    
-    /* Try 8-byte absolute addresses first */
+
     for (size_t i = 0; i < max_entries; i++) {
-        size_t entry_offset = table_offset + (i * 8);
-        
+        size_t entry_offset = table_offset + i*8;
         if (entry_offset + 8 > size) break;
-        
-        uint64_t entry_addr = *(uint64_t*)(code + entry_offset);
-        
+
+        uint64_t entry_addr = 0;
+        memcpy(&entry_addr, code + entry_offset, sizeof(entry_addr));
+
         if (code_addr(entry_addr, base_addr, size)) {
-            reloc_add(table, entry_offset, entry_offset, 8,
-                     RELOC_ABS64, 0, entry_addr, false);
+            reloc_add(table, entry_offset, entry_offset, 8, RELOC_ABS64, 0, entry_addr, false);
             entries_found_abs++;
-        } else {
-            break;
-        }
+        } else break;
     }
-    
-    /* If no 8-byte entries found, try 4-byte relative offsets */
+
     if (entries_found_abs == 0) {
         for (size_t i = 0; i < max_entries; i++) {
-            size_t entry_offset = table_offset + (i * 4);
-            
+            size_t entry_offset = table_offset + i*4;
             if (entry_offset + 4 > size) break;
-            
-            int32_t rel_offset = *(int32_t*)(code + entry_offset);
-            
-            /* Calculate absolute target from THIS entry's location */
+
+            int32_t rel_offset = 0;
+            memcpy(&rel_offset, code + entry_offset, sizeof(rel_offset));
             uint64_t target = base_addr + entry_offset + rel_offset;
-            
-            /* 0ffset should be reasonable and target should be in code */
-            if (rel_offset >= -0x10000 && rel_offset <= 0x10000 &&
-                iz_internal(target, base_addr, size)) {
-                reloc_add(table, entry_offset, entry_offset, 4,
-                         RELOC_REL32, rel_offset, target, true);
+
+            if (rel_offset >= -0x10000 && rel_offset <= 0x10000 && iz_internal(target, base_addr, size)) {
+                reloc_add(table, entry_offset, entry_offset, 4, RELOC_REL32, rel_offset, target, true);
                 entries_found_rel++;
-            } else {
-                break;
-            }
+            } else break;
         }
     }
-    
-    if (entries_found_abs > 0) {
-        DBG("[Reloc] Found jump table (abs64) at 0x%zx with %zu entries\n", 
-            table_offset, entries_found_abs);
-    } else if (entries_found_rel > 0) {
-        DBG("[Reloc] Found jump table (rel32) at 0x%zx with %zu entries\n", 
-            table_offset, entries_found_rel);
-    }
 }
+
 
 /* Analyze relocation table to determine if code is self-contained */
 bool own_self(reloc_table_t *table, size_t code_size) { 
@@ -702,174 +681,210 @@ bool reloc_apply(uint8_t *code, size_t size, reloc_table_t *table,
     return (failed == 0);
 }
 
-/* Update relocation table after code insertion/expansion */
-void reloc_update(reloc_table_t *table,  
-                                   size_t insertion_offset,
-                                   size_t bytes_inserted,
-                                   uint8_t *code, 
-                                   size_t code_size,
-                                   uint64_t base_addr,
-                                   uint8_t arch) {
-    if (!table || !code || bytes_inserted == 0) return;
-    
-    size_t up_offst = 0; 
-    size_t up_disp = 0; 
+/* Relocation update after insertion */
+bool reloc_update(reloc_table_t *table,  
+                  size_t insertion_offset,
+                  size_t bytes_inserted,
+                  uint8_t *code, 
+                  size_t code_size,
+                  uint64_t base_addr,
+                  uint8_t arch) {
+    if (!table || !code || bytes_inserted == 0) return true;
+
+    size_t up_offst = 0;
+    size_t up_disp = 0;
     size_t Oz_errors = 0;
-    
+
     for (size_t i = 0; i < table->count; i++) {
         reloc_entry_t *rel = &table->entries[i];
-        
-        /* Determine if instruction or target moved BEFORE updating */
-        bool inst_moved = (rel->offset > insertion_offset);
+
+        size_t inst_start = rel->instruction_start;
+        size_t inst_len = rel->instruction_len;
+
+        if (inst_start == SIZE_MAX) {
+            inst_start = 0;
+        } else if (inst_start >= code_size) {
+            DBG("[!] Invalid instruction_start 0x%zx >= code_size 0x%zx for reloc at 0x%zx\n", 
+                inst_start, code_size, rel->offset);
+            return false;
+        }
+
+        if (inst_len == 0 && inst_start < code_size) {
+            if (arch == ARCH_X86) {
+                x86_inst_t inst;
+                if (decode_x86_withme(code + inst_start, code_size - inst_start,
+                                     base_addr + inst_start, &inst, NULL) && inst.valid) {
+                    inst_len = inst.len;
+                    rel->instruction_len = inst_len;
+                }
+            } else if (arch == ARCH_ARM) {
+                inst_len = 4;
+                rel->instruction_len = 4;
+            }
+        }
+
+        if (inst_len > 0 && insertion_offset > inst_start &&
+            insertion_offset < inst_start + inst_len) {
+            DBG("[!] Insertion at 0x%zx inside instruction at 0x%zx (len=%zu)\n",
+                insertion_offset, inst_start, inst_len);
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < table->count; i++) {
+        reloc_entry_t *rel = &table->entries[i];
+
+        /* Instruction moves if insertion is at or before its start (>= semantics) */
+        bool inst_moved = (rel->instruction_start != SIZE_MAX) ? 
+            (rel->instruction_start >= insertion_offset) : 
+            (rel->offset >= insertion_offset);
         bool target_moved = (rel->target >= base_addr + insertion_offset);
-        
-        /* If relocation is AFTER the insertion point, shift all offsets */
+
         if (inst_moved) {
             rel->offset += bytes_inserted;
-            rel->instruction_start += bytes_inserted;
+            if (rel->instruction_start != SIZE_MAX) rel->instruction_start += bytes_inserted;
             up_offst++;
         }
-        
-        /* Update target addresses for ALL relocations if target is after insertion */
-        if (target_moved) {
-            rel->target += bytes_inserted;
-        }
-        
-        /* If it's a PC-relative relocation, recalculate displacement */
+
+        if (target_moved) rel->target += bytes_inserted;
+
         if (rel->is_relative && arch == ARCH_X86) {
+            /* Skip recalculation if nothing changed */
+            if (!inst_moved && !target_moved) continue;
             
-            /* Only recalculate if something changed */
-            if (!inst_moved && !target_moved) {
-                continue;
-            }
             size_t inst_start = rel->instruction_start;
             size_t inst_len = rel->instruction_len;
-            
-            /* Bounds check */
+
+            if (inst_start == SIZE_MAX && rel->offset > 0) {
+                size_t search_start = (rel->offset > 15) ? rel->offset - 15 : 0;
+                bool found = false;
+
+                for (size_t try_offset = search_start; try_offset <= rel->offset && try_offset + 15 <= code_size; try_offset++) {
+                    x86_inst_t search_inst;
+                    if (decode_x86_withme(code + try_offset, code_size - try_offset,
+                                          base_addr + try_offset, &search_inst, NULL)) {
+                        if (search_inst.valid && search_inst.len > 0) {
+                            size_t rel_in_inst = rel->offset - try_offset;
+                            if (rel_in_inst + 4 <= search_inst.len) {
+                                inst_start = try_offset;
+                                inst_len = search_inst.len;
+                                rel->instruction_start = inst_start;
+                                rel->instruction_len = inst_len;
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!found) {
+                    DBG("[!] Cannot find instruction for relocation at 0x%zx\n", rel->offset);
+                    Oz_errors++;
+                    continue;
+                }
+            }
+
+            if (inst_len == 0 && inst_start < code_size) {
+                x86_inst_t inst;
+                if (decode_x86_withme(code + inst_start, code_size - inst_start,
+                                     base_addr + inst_start, &inst, NULL) && inst.valid) {
+                    inst_len = inst.len;
+                    rel->instruction_len = inst_len;
+                } else {
+                    DBG("[!] Failed to decode instruction at 0x%zx for relocation\n", inst_start);
+                    Oz_errors++;
+                    continue;
+                }
+            }if (inst_len == 0) {Oz_errors++;continue;}
+
             if (inst_start >= code_size || rel->offset + 4 > code_size) {
-                continue;
-            }
-            
-            /* Calculate new PC (after instruction) */
-            uint64_t new_pc = base_addr + inst_start + inst_len;
-            uint64_t target_addr = rel->target;
-            int64_t new_disp = (int64_t)target_addr - (int64_t)new_pc;
-            
-            /* Verify it fits in 32-bit signed */
-            if (new_disp < INT32_MIN || new_disp > INT32_MAX) {
-                DBG("[!] Relocation at 0x%zx: displacement (%lld bytes)\n", 
-                       rel->offset, new_disp);
-                DBG("[!] Instruction at 0x%zx, target 0x%llx, new_pc 0x%llx\n",
-                       inst_start, (unsigned long long)target_addr, (unsigned long long)new_pc);
-                DBG("[!] This mutation will be rejected shit too aggressive\n");
                 Oz_errors++;
-                /* Just reject aggressive mutations for now ain't got time for nothin else */
                 continue;
             }
-            
-            /* Update the displacement in code */
+
+            uint64_t new_pc = base_addr + inst_start + inst_len;
+            int64_t new_disp = (int64_t)rel->target - (int64_t)new_pc;
+            if (new_disp < INT32_MIN || new_disp > INT32_MAX) {
+                DBG("[!] Relocation at 0x%zx: displacement overflow (%lld)\n", rel->offset, new_disp);
+                Oz_errors++;
+                continue;
+            }
+
             *(int32_t*)(code + rel->offset) = (int32_t)new_disp;
             up_disp++;
         }
         else if (rel->is_relative && arch == ARCH_ARM) {
-            if (!inst_moved && !target_moved) {
-                continue;
-            }
+            /* Skip recalculation if nothing changed */
+            if (!inst_moved && !target_moved) continue;
             
             size_t inst_start = rel->instruction_start;
-            
-            if (inst_start + 4 > code_size) continue;
-            
+            if (inst_start == SIZE_MAX) inst_start = rel->offset;
+
+            if (inst_start + 4 > code_size) {
+                Oz_errors++;
+                continue;
+            }
+
             uint32_t *insn_ptr = (uint32_t*)(code + inst_start);
             uint32_t insn = *insn_ptr;
             uint64_t new_pc = base_addr + inst_start;
             uint64_t target_addr = rel->target;
-            
             int64_t new_offset = (int64_t)target_addr - (int64_t)new_pc;
-            
-            /* B/BL (26-bit signed offset, scaled by 4) */
-            if ((insn & 0x7C000000) == 0x14000000) {
-                int64_t max_range = (1LL << 27);
-                if (new_offset >= -max_range && new_offset < max_range && (new_offset & 3) == 0) {
-                    uint32_t new_insn = (insn & 0xFC000000) | ((new_offset / 4) & 0x3FFFFFF);
-                    *insn_ptr = new_insn;
+
+            if ((insn & 0x7C000000) == 0x14000000) { // B/BL
+                if (new_offset >= -(1LL<<27) && new_offset < (1LL<<27) && (new_offset & 3) == 0) {
+                    *insn_ptr = (insn & 0xFC000000) | ((new_offset/4) & 0x3FFFFFF);
                     up_disp++;
-                } else {
-                    DBG("[!] B/BL at 0x%zx: offset (%lld)\n", inst_start, new_offset);
-                    Oz_errors++;
-                }
+                } else Oz_errors++;
             }
-            /* B.cond, CBZ, CBNZ (19-bit signed offset, scaled by 4) */
-            else if ((insn & 0xFF000010) == 0x54000000 || 
-                     (insn & 0x7E000000) == 0x34000000) {
-                int64_t max_range = (1LL << 20);
-                if (new_offset >= -max_range && new_offset < max_range && (new_offset & 3) == 0) {
-                    uint32_t new_insn = (insn & 0xFF00001F) | (((new_offset / 4) & 0x7FFFF) << 5);
-                    *insn_ptr = new_insn;
+            else if ((insn & 0xFF000010) == 0x54000000 || (insn & 0x7E000000) == 0x34000000) { // B.cond, CBZ/CBNZ
+                if (new_offset >= -(1LL<<20) && new_offset < (1LL<<20) && (new_offset & 3) == 0) {
+                    /* Both instruction types use same encoding for offset */
+                    *insn_ptr = (insn & 0xFF00001F) | (((new_offset/4) & 0x7FFFF) << 5);
                     up_disp++;
-                } else {
-                    DBG("[!] B.cond/CBZ/CBNZ at 0x%zx: offset (%lld)\n", inst_start, new_offset);
-                    Oz_errors++;
-                }
+                } else Oz_errors++;
             }
-            /* ADRP (21-bit signed page offset) */
-            else if ((insn & 0x9F000000) == 0x90000000) {
-                uint64_t target_page = (target_addr & ~0xFFFULL);
+            else if ((insn & 0x9F000000) == 0x90000000) { // ADRP
+                uint64_t target_page = target_addr & ~0xFFFULL;
                 uint64_t pc_page = (new_pc & ~0xFFFULL);
                 int64_t page_offset = (int64_t)target_page - (int64_t)pc_page;
-                
-                if (page_offset >= -(1LL << 32) && page_offset < (1LL << 32)) {
+                if (page_offset >= -(1LL<<32) && page_offset < (1LL<<32)) {
                     int64_t imm = page_offset / 4096;
                     uint32_t immlo = imm & 0x3;
                     uint32_t immhi = (imm >> 2) & 0x7FFFF;
-                    uint32_t new_insn = (insn & 0x9F00001F) | (immlo << 29) | (immhi << 5);
-                    *insn_ptr = new_insn;
+                    *insn_ptr = (insn & 0x9F00001F) | (immlo << 29) | (immhi << 5);
                     up_disp++;
-                } else {
-                    DBG("[!] ADRP at 0x%zx: page offset (%lld)\n", inst_start, page_offset);
-                    Oz_errors++;
-                }
+                } else Oz_errors++;
             }
-            /* ADR (21-bit signed offset) */
-            else if ((insn & 0x9F000000) == 0x10000000) {
-                if (new_offset >= -(1LL << 20) && new_offset < (1LL << 20)) {
+            else if ((insn & 0x9F000000) == 0x10000000) { // ADR
+                if (new_offset >= -(1LL<<20) && new_offset < (1LL<<20)) {
                     uint32_t immlo = new_offset & 0x3;
                     uint32_t immhi = (new_offset >> 2) & 0x7FFFF;
-                    uint32_t new_insn = (insn & 0x9F00001F) | (immlo << 29) | (immhi << 5);
-                    *insn_ptr = new_insn;
+                    *insn_ptr = (insn & 0x9F00001F) | (immlo << 29) | (immhi << 5);
                     up_disp++;
-                } else {
-                    DBG("[!] ADR at 0x%zx: offset (%lld)\n", inst_start, new_offset);
-                    Oz_errors++;
-                }
+                } else Oz_errors++;
             }
-            /* TBZ/TBNZ (14-bit signed offset, scaled by 4) */
-            else if ((insn & 0x7E000000) == 0x36000000 || (insn & 0x7E000000) == 0x37000000) {
-                int64_t max_range = (1LL << 15);
-                if (new_offset >= -max_range && new_offset < max_range && (new_offset & 3) == 0) {
-                    uint32_t new_insn = (insn & 0xFFF8001F) | (((new_offset / 4) & 0x3FFF) << 5);
-                    *insn_ptr = new_insn;
+            else if ((insn & 0x3B000000) == 0x18000000) { // LDR literal
+                /* LDR literal is PC-relative from instruction start, no adjustment needed */
+                if (new_offset >= -(1LL<<20) && new_offset < (1LL<<20) && (new_offset & 3) == 0) {
+                    *insn_ptr = (insn & 0xFF00001F) | (((new_offset/4) & 0x7FFFF) << 5);
                     up_disp++;
-                } else {
-                    DBG("[!] TBZ/TBNZ at 0x%zx: offset (%lld)\n", inst_start, new_offset);
-                    Oz_errors++;
-                }
+                } else Oz_errors++;
+            }
+            else if ((insn & 0x7E000000) == 0x36000000 || (insn & 0x7E000000) == 0x37000000) { // TBZ/TBNZ
+                if (new_offset >= -(1LL<<15) && new_offset < (1LL<<15) && (new_offset & 3) == 0) {
+                    *insn_ptr = (insn & 0xFFF8001F) | (((new_offset/4) & 0x3FFF) << 5);
+                    up_disp++;
+                } else Oz_errors++;
             }
         }
     }
-    
-    if (up_offst > 0 || up_disp > 0 || Oz_errors > 0) {
-        DBG("[Reloc] Updated %zu offsets, %zu displacements after insertion at 0x%zx (+%zu bytes)\n",
-               up_offst, up_disp, insertion_offset, bytes_inserted);
-        if (Oz_errors > 0) {
-            DBG("[Reloc] ERROR: %zu displacement  - mutation must be rejected!\n",
-                   Oz_errors);
-        }
-    }
+
+    if (Oz_errors > 0) return false;
+    return true;
 }
 
-/* Validate that all relocations will fit after potential expansion
- * Call this BEFORE applying mutations to prevent  */
+/* Validate that all relocations will fit after potential expansion */
 bool reloc_expanziv(reloc_table_t *table, size_t current_size,
                                size_t proposed_size, uint64_t base_addr, uint8_t arch) {
     if (!table) return true;
@@ -900,12 +915,12 @@ bool reloc_expanziv(reloc_table_t *table, size_t current_size,
     }
     
     if (count_0z > 0) { 
-        DBG("[Reloc] NAH: %zu/%zu at size %zu\n",
+        DBG("[Reloc] NAH %zu/%zu size %zu\n",
                count_0z, checked, proposed_size);
         return false;
     }
     
-    DBG("[Reloc] AIGHT %zu at size %zu\n",
+    DBG("[Reloc] AIGHT %zu size %zu\n",
            checked, proposed_size);
     return true;
 }
@@ -969,7 +984,7 @@ size_t reloc_overz(reloc_table_t *table, uint8_t *code, size_t code_size,
 /* I'm an engineer at heart */
 void reloc_stats(reloc_table_t *table, size_t code_size) {
     if (!table) {
-        printf("[Reloc] No relocation table\n");
+        DBG("[Reloc] No relocation table\n");
         return;
     }
     
@@ -991,13 +1006,13 @@ void reloc_stats(reloc_table_t *table, size_t code_size) {
         
         /* Detect SIMD relocations by checking instruction bytes */
         if (rel->instruction_start < code_size) {
-            /* Would need code pointer to check, skip for now */
+            /* pass for now */
         }
     }
     
-    printf("[Reloc] Total: %zu entries\n", table->count);
-    printf("[Reloc] Internal: %zu, External: %zu\n", internal, external);
-    printf("[Reloc] By type: CALL=%zu JMP=%zu LEA=%zu ABS64=%zu REL32=%zu\n",
+    DBG("[Reloc] Total: %zu entries\n", table->count);
+    DBG("[Reloc] Internal: %zu, External: %zu\n", internal, external);
+    DBG("[Reloc] By type: CALL=%zu JMP=%zu LEA=%zu ABS64=%zu REL32=%zu\n",
            by_type[RELOC_CALL], by_type[RELOC_JMP], by_type[RELOC_LEA],
            by_type[RELOC_ABS64], by_type[RELOC_REL32]);
 }
