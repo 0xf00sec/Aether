@@ -749,11 +749,30 @@ bool reloc_update(reloc_table_t *table,
         if (target_moved) rel->target += bytes_inserted;
 
         if (rel->is_relative && arch == ARCH_X86) {
-            /* Skip recalculation if nothing changed */
-            if (!inst_moved && !target_moved) continue;
-            
             size_t inst_start = rel->instruction_start;
             size_t inst_len = rel->instruction_len;
+            
+            /* Get instruction length if not available */
+            if (inst_len == 0 && inst_start != SIZE_MAX && inst_start < code_size) {
+                x86_inst_t inst;
+                if (decode_x86_withme(code + inst_start, code_size - inst_start,
+                                     base_addr + inst_start, &inst, NULL) && inst.valid) {
+                    inst_len = inst.len;
+                    rel->instruction_len = inst_len;
+                }
+            }
+            
+            /* Calculate RIP point (end of instruction) */
+            size_t rip_point = (inst_start != SIZE_MAX && inst_len > 0) ? 
+                (inst_start + inst_len) : (rel->offset + 4);
+            
+            /* RIP calculation point moves if insertion is at or before it */
+            bool rip_moved = (insertion_offset <= rip_point);
+            if (!inst_moved && !target_moved && !rip_moved) continue;
+            
+            /* Re-fetch inst_start and inst_len */
+            inst_start = rel->instruction_start;
+            inst_len = rel->instruction_len;
 
             if (inst_start == SIZE_MAX && rel->offset > 0) {
                 size_t search_start = (rel->offset > 15) ? rel->offset - 15 : 0;
@@ -778,7 +797,7 @@ bool reloc_update(reloc_table_t *table,
                 }
 
                 if (!found) {
-                    DBG("[!] Cannot find instruction for relocation at 0x%zx\n", rel->offset);
+                    DBG("[!] Cannot find at 0x%zx\n", rel->offset);
                     Oz_errors++;
                     continue;
                 }
@@ -791,7 +810,7 @@ bool reloc_update(reloc_table_t *table,
                     inst_len = inst.len;
                     rel->instruction_len = inst_len;
                 } else {
-                    DBG("[!] Failed to decode instruction at 0x%zx for relocation\n", inst_start);
+                    DBG("[!] Failed to decode at 0x%zx for relocation\n", inst_start);
                     Oz_errors++;
                     continue;
                 }
@@ -814,11 +833,14 @@ bool reloc_update(reloc_table_t *table,
             up_disp++;
         }
         else if (rel->is_relative && arch == ARCH_ARM) {
-            /* Skip recalculation if nothing changed */
-            if (!inst_moved && !target_moved) continue;
-            
             size_t inst_start = rel->instruction_start;
             if (inst_start == SIZE_MAX) inst_start = rel->offset;
+            
+            /* ARM64 instructions are always 4 bytes */
+            size_t inst_len = 4;
+            size_t pc_point = inst_start + inst_len;
+            bool pc_moved = (insertion_offset <= pc_point);
+            if (!inst_moved && !target_moved && !pc_moved) continue;
 
             if (inst_start + 4 > code_size) {
                 Oz_errors++;
@@ -827,6 +849,7 @@ bool reloc_update(reloc_table_t *table,
 
             uint32_t *insn_ptr = (uint32_t*)(code + inst_start);
             uint32_t insn = *insn_ptr;
+            
             uint64_t new_pc = base_addr + inst_start;
             uint64_t target_addr = rel->target;
             int64_t new_offset = (int64_t)target_addr - (int64_t)new_pc;
@@ -880,7 +903,10 @@ bool reloc_update(reloc_table_t *table,
         }
     }
 
-    if (Oz_errors > 0) return false;
+    if (Oz_errors > 0) {return false;}
+    
+    DBG("[+] %zu offsets updated %zu \n",
+        up_offst, up_disp);
     return true;
 }
 
