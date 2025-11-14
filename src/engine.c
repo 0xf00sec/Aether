@@ -2727,7 +2727,7 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
                     }
                 }
             }
-            
+
             if (cool_to_insert && offset + 8 <= view_size) {
                 uint8_t junk_buf[4];
                 size_t junk_len;
@@ -3597,27 +3597,26 @@ size_t decode_map(const uint8_t *code, size_t size, instr_info_t *out, size_t ma
     } if (size == 0 || size > 0x10000000) {return 0;}
     
     size_t n = 0, off = 0;
-    size_t cf_count = 0;
-    size_t failed_decodes = 0;
+    size_t dead_code = 0; 
     const size_t max_failed = size / 10;  /* Allow max 10% failures */
     
 #if defined(__x86_64__) || defined(_M_X64)
     while (off < size && n < max) {
         
-        if (failed_decodes > max_failed) {
+        if (dead_code > max_failed) {
             break;
         }
         
         x86_inst_t inst;
         if (!decode_x86_withme(code + off, size - off, 0, &inst, NULL)) {
-            failed_decodes++;
+            dead_code++;
             off++;
             continue;
         }
         
         /* Validate instruction length */
         if (inst.len == 0 || inst.len > 15 || off + inst.len > size) {
-            failed_decodes++;
+            dead_code++;
             off++;
             continue;
         } if (n >= max) {break;}
@@ -3640,19 +3639,15 @@ size_t decode_map(const uint8_t *code, size_t size, instr_info_t *out, size_t ma
             }
         }
         
-        if (inst.is_control_flow) {
-            cf_count++;
-        }
-        
         off += inst.len;
         n++;
     }
 #elif defined(__aarch64__) || defined(_M_ARM64)
-    while (off + 4 <= size && n < max) {if (failed_decodes > max_failed) {break;}
+    while (off + 4 <= size && n < max) {if (dead_code > max_failed) {break;}
         
         arm64_inst_t inst;
         if (!decode_arm64(code + off, &inst) || !inst.valid) {
-            failed_decodes++;
+            dead_code++;
             off += 4;
             continue;
         }
@@ -3669,14 +3664,11 @@ size_t decode_map(const uint8_t *code, size_t size, instr_info_t *out, size_t ma
         out[n].valid = 1;
         
         if (off + 4 <= size) {memcpy(out[n].raw, code + off, 4);}
-        if (inst.is_control_flow) {cf_count++;}
         
         off += 4;
         n++;
     }
 #endif
     
-    if (failed_decodes > 0) {}
-    if (cf_count > 0) {}    
     return n;
 }
