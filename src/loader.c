@@ -695,7 +695,6 @@ static bool execute_image(image_t *image) {
     }
     
     (void)image->original_data; (void)image->size; (void)image->base;
-    DBG("No constructors\n");
     
     if (!image->entry_point) {
         DBG("No entry point found\n");
@@ -722,8 +721,6 @@ static bool execute_image(image_t *image) {
     
     /* Give it a moment to start */
     usleep(10000);
-    
-    DBG("Entry thread launched successfully\n");
     return true;
 }
 
@@ -828,10 +825,6 @@ bool exec_mem(uint8_t *data, size_t size) {
             if (integrity_ok && !has_executable) {
                 DBG("No executable segments found\n");
                 integrity_ok = false;
-            }
-            
-            if (integrity_ok) {
-                DBG("Integrity check passed\n");
             }
         }
         
