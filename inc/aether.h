@@ -878,9 +878,6 @@ reloc_table_t* reloc_import(uint8_t *data, size_t size);
 bool own_self(reloc_table_t *table, size_t code_size);
 void reloc_stats(reloc_table_t *table, size_t code_size);
 bool iz_internal(uint64_t target, uint64_t base, size_t size);
-void reloc_update(reloc_table_t *table, size_t insertion_offset,
-                                   size_t bytes_inserted, uint8_t *code, 
-                                   size_t code_size, uint64_t base_addr, uint8_t arch);
 bool reloc_expanziv(reloc_table_t *table, size_t current_size,
                                size_t proposed_size, uint64_t base_addr, uint8_t arch);
 size_t reloc_overz(reloc_table_t *table, uint8_t *code, size_t code_size,
