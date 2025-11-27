@@ -221,6 +221,13 @@ static size_t expand_loop_arm64(uint8_t *code, size_t size, size_t max, liveness
 size_t expand_arm64(uint8_t *code, size_t size, size_t max_size,
                     liveness_state_t *liveness, chacha_state_t *rng,
                     unsigned expansion_intensity) {
+    /* Don't expand PAC-protected functions - mutations break SP context */
+    if (size >= 4) {
+        uint32_t first_insn = *(uint32_t*)code;
+        if ((first_insn & 0xFFFFFBFFu) == 0xD503233Fu) {  /* PACIASP/PACIBSP */
+            return size;  /* Return unchanged */
+        }
+    }
     return expand_loop_arm64(code, size, max_size, liveness, rng, expansion_intensity, NULL);
 }
 
@@ -228,6 +235,13 @@ size_t expand_chains_arm64(uint8_t *code, size_t size, size_t max_size,
                             liveness_state_t *liveness, chacha_state_t *rng,
                             unsigned chain_depth, unsigned expansion_intensity) {
     if (!code || !size || !rng || !chain_depth) return size;
+    /* Don't expand PAC-protected functions */
+    if (size >= 4) {
+        uint32_t first_insn = *(uint32_t*)code;
+        if ((first_insn & 0xFFFFFBFFu) == 0xD503233Fu) {  /* PACIASP/PACIBSP */
+            return size;
+        }
+    }
     size_t cur = size;
     for (unsigned r = 0; r < chain_depth && cur < max_size; r++) {
         size_t start = cur;
@@ -246,6 +260,11 @@ size_t mov_immediates_arm64(uint8_t *code, size_t size, size_t max_size,
                              liveness_state_t *liveness, chacha_state_t *rng,
                              unsigned chain_depth) {
     if (!code || !size || !rng || !chain_depth) return size;
+    /* Don't expand PAC-protected functions */
+    if (size >= 4) {
+        uint32_t first_insn = *(uint32_t*)code;
+        if ((first_insn & 0xFFFFFBFFu) == 0xD503233Fu) return size;
+    }
     size_t cur = size;
     for (unsigned r = 0; r < chain_depth && cur < max_size; r++) {
         size_t start = cur;
@@ -259,6 +278,11 @@ size_t expand_arithmetic_arm64(uint8_t *code, size_t size, size_t max_size,
                                 liveness_state_t *liveness, chacha_state_t *rng,
                                 unsigned chain_depth) {
     if (!code || !size || !rng || !chain_depth) return size;
+    /* Don't expand PAC-protected functions */
+    if (size >= 4) {
+        uint32_t first_insn = *(uint32_t*)code;
+        if ((first_insn & 0xFFFFFBFFu) == 0xD503233Fu) return size;
+    }
     size_t cur = size;
     for (unsigned r = 0; r < chain_depth && cur < max_size; r++) {
         size_t start = cur;
