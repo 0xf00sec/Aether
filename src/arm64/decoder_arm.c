@@ -44,7 +44,9 @@ static bool is_cfi(uint32_t insn) {
     if ((insn & 0xFF000010u) == 0x54000000u) return true;                   
     if ((insn & 0xFFFFFC1Fu) == 0xD65F0000u) return true;                   
     if ((insn & 0xFFFFFC1Fu) == 0xD61F0000u) return true;                   
-    if ((insn & 0xFFFFFC1Fu) == 0xD63F0000u) return true;                   
+    if ((insn & 0xFFFFFC1Fu) == 0xD63F0000u) return true;
+    /* PAC authenticated returns */
+    if ((insn & 0xFFFFFBFFu) == 0xD65F0BFFu) return true;  /* RETAA/RETAB */
     return false;
 }
 
@@ -53,7 +55,12 @@ static bool is_priv(uint32_t insn) {
     if ((insn & 0xFFE0001Fu) == 0xD4000001u) return true;                   
     if ((insn & 0xFFC00000u) == 0xD5000000u) return true;                   
     if ((insn & 0xFFF00000u) == 0xD5300000u) return true;                   
-    if ((insn & 0xFFF00000u) == 0xD5100000u) return true;                   
+    if ((insn & 0xFFF00000u) == 0xD5100000u) return true;
+    /* PAC instructions are privileged operations */
+    if ((insn & 0xFFFFFBFFu) == 0xD503233Fu) return true;  /* PACIASP/PACIBSP */
+    if ((insn & 0xFFFFFBFFu) == 0xD50323BFu) return true;  /* AUTIASP/AUTIBSP */
+    if ((insn & 0xFFE0FC00u) == 0xDAC10000u) return true;  /* PACIA/PACIB/etc */
+    if ((insn & 0xFFE0FC00u) == 0xDAC11000u) return true;  /* AUTIA/AUTIB/etc */
     return false;
 }
 
