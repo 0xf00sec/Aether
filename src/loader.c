@@ -109,26 +109,6 @@ void free_dual(void *rw_addr, void *rx_addr, size_t size) {
     }
 } 
 
-#if defined(__aarch64__)
-extern void pthread_jit(int enabled);
-
-void* jit_alloc(size_t size) {
-    /* Allocate as RWX (only works with proper entitlements) */
-    void *addr = mmap(NULL, size, PROT_READ | PROT_WRITE | PROT_EXEC,
-                      MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
-    
-    if (addr == MAP_FAILED) {
-        DBG("MAP_JIT failed: %s\n", strerror(errno));
-        return NULL;
-    }
-    return addr;
-}
-
-void write_enable(void) {pthread_jit(0);}
-void write_disable(void) {pthread_jit(1);}
-#endif
-
-
 /* Find entry point mh is original data, base is mapped memory */
 static void* find_entry(struct mach_header_64 *mh, void *base) {
     uint8_t *ptr = (uint8_t *)mh + sizeof(struct mach_header_64);
@@ -162,19 +142,11 @@ static void* find_entry(struct mach_header_64 *mh, void *base) {
         }
         
         if (lc->cmd == LC_UNIXTHREAD) {
-            #if defined(__x86_64__)
             x86_thread_state64_t *state = (x86_thread_state64_t *)((uint8_t *)lc + sizeof(struct thread_command));
             uint64_t entry_vmaddr = state->__rip;
             void *entry = (uint8_t *)base + (entry_vmaddr - min_vmaddr);
             DBG("LC_UNIXTHREAD entry at 0x%llx -> %p\n", entry_vmaddr, entry);
             return entry;
-            #elif defined(__aarch64__)
-            arm_thread_state64_t *state = (arm_thread_state64_t *)((uint8_t *)lc + sizeof(struct thread_command));
-            uint64_t entry_vmaddr = state->__pc;
-            void *entry = (uint8_t *)base + (entry_vmaddr - min_vmaddr);
-            DBG("LC_UNIXTHREAD entry at 0x%llx -> %p\n", entry_vmaddr, entry);
-            return entry;
-            #endif
         }
         
         ptr += lc->cmdsize;
@@ -213,11 +185,6 @@ static void* entry_thread(void *arg) {
 
 extern void* alloc_dual(size_t size, void **rx_out);
 extern void free_dual(void *rw_addr, void *rx_addr, size_t size);
-#if defined(__aarch64__)
-extern void* jit_alloc(size_t size);
-extern void write_enable(void);
-extern void write_disable(void);
-#endif
 
 /* This works around W^X by using file-backed memory or vm_remap */
 static mapping_t* map_exec(uint8_t *data, size_t size) {
@@ -282,19 +249,6 @@ static mapping_t* map_exec(uint8_t *data, size_t size) {
     mapping->size = total_size;
     mapping->is_dual = false;
     mapping->is_jit = false;
-    
-#if defined(__aarch64__)
-    /* need some entitlement */
-    void *jit_mem = jit_alloc(total_size);
-    if (jit_mem) {
-        mapping->rw_base = jit_mem;
-        mapping->rx_base = jit_mem;  /* Same address, toggle with pthread_jit_write_protect */
-        mapping->is_dual = false;
-        mapping->is_jit = true;
-        write_enable();
-        goto have_memory;
-    }
-#endif
     
     /* Try dual mapping with vm_remap */
     void *rw = NULL, *rx = NULL;
@@ -404,13 +358,6 @@ have_memory:
     }
     
     DBG("All segments mapped to RW region\n");
-    
-#if defined(__aarch64__)
-    /* Disable write protection */
-    if (mapping->is_jit) {
-        write_disable();
-    }
-#endif
     
     /* If single mapping (not dual), try to make it executable 
             for dual mapping, RX is already set up correctly */
@@ -567,9 +514,6 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
     
     /* Apply relocations to make code position-independent */
     uint8_t arch_type = ARCH_X86;
-#if defined(__aarch64__)
-    arch_type = ARCH_ARM;
-#endif
     
     /* Scan relocations from the RX mapping (where code will execute)
      but use the original base address for calculating targets */
@@ -602,12 +546,6 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
         if (image->is_dual_mapped) {
             target_code = (uint8_t*)image->rw_base;
             DBG("Applying to RW mapping at %p\n", target_code);
-        } else if (image->is_jit) {
-#if defined(__aarch64__)
-            write_enable();
-#endif
-            target_code = (uint8_t*)image->base;
-            DBG("Applying to JIT mapping at %p\n", target_code);
         } else {
             /* Need to make memory writable temporarily */
             if (mprotect(image->base, image->size, PROT_READ | PROT_WRITE) != 0) {
@@ -630,14 +568,9 @@ static image_t* prase_macho(uint8_t *data, size_t size) {
                                         actual_base, arch_type);
         
         /* Restore protection if needed */
-        if (!image->is_dual_mapped && !image->is_jit) {
+        if (!image->is_dual_mapped) {
             mprotect(image->base, image->size, PROT_READ | PROT_EXEC);
         }
-#if defined(__aarch64__)
-        if (image->is_jit) {
-            write_disable();
-        }
-#endif
         
         if (!reloc_success) {
             DBG(" Relocation application failed\n");
