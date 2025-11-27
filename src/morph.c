@@ -865,6 +865,15 @@ static bool shuffler(context_t *ctx, unsigned intensity) {
 bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {    
     if (!ctx || !ctx->working_code || ctx->codesz == 0) return false;
 
+#if defined(__aarch64__) || defined(_M_ARM64)
+    if (ctx->codesz >= 4) {
+        uint32_t first_insn = *(uint32_t*)ctx->working_code;
+        if ((first_insn & 0xFFFFFBFFu) == 0xD503233Fu) { 
+            return false;
+        }
+    }
+#endif
+
     size_t disk_limit = max_size;
     size_t memory_limit = ctx->buffcap;
     
