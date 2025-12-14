@@ -2,7 +2,7 @@
 
 /* Main dispatcher for ARM expansions */
 
-#if defined(ARCH_ARM)
+#if defined(__aarch64__) || defined(_M_ARM64)
 
 static inline bool can_use_reg(uint8_t reg) {return reg < 29;}
 static inline void emit_arm64(uint8_t *code, size_t *len, uint32_t base, bool is_64bit, 
@@ -182,7 +182,7 @@ bool apply_arm64(uint8_t *code, size_t *size, size_t max_size, size_t offset,
     for (size_t i = 0; i < exp.len; i += 4) {
         arm64_inst_t verify;
         if (!decode_arm64(code + offset + i, &verify) || !verify.valid || verify.ring0) {
-            memcpy(code + offset, inst->raw, 4);
+            memcpy(code + offset, &inst->raw, 4);
             if (exp.len > 4) {
                 memmove(code + offset + 4, code + offset + exp.len, *size - offset - exp.len);
                 *size -= diff;
@@ -292,4 +292,4 @@ size_t expand_arithmetic_arm64(uint8_t *code, size_t size, size_t max_size,
     return cur;
 }
 
-#endif  /* ARCH_ARM */
+#endif  /* __aarch64__ || _M_ARM64 */

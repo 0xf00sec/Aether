@@ -17,17 +17,14 @@ ARM_DIR  := $(SRC_DIR)/arm64
 OBJ_DIR  := obj
 BIN_DIR  := bin
 
-# Architecture 
+# Architecture detection for source file selection
 UNAME_M  := $(shell uname -m)
 ifeq ($(UNAME_M),x86_64)
     ARCH := x86
-    CFLAGS += -DARCH_X86
 else ifeq ($(UNAME_M),arm64)
     ARCH := arm
-    CFLAGS += -DARCH_ARM
 else ifeq ($(UNAME_M),aarch64)
     ARCH := arm
-    CFLAGS += -DARCH_ARM
 else
     $(error Unsupported architecture: $(UNAME_M))
 endif

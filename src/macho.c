@@ -31,9 +31,9 @@ builder_init(size_t code_size)
     b->header_size = hdr_sz;
     b->code_size   = code_size;
 
-    DBG("  Header size: %zu bytes\n", hdr_sz);
-    DBG("  Code offset: %zu bytes (page-aligned)\n", code_off);
-    DBG("  Code size:   %zu bytes\n", code_size);
+    printf("  Header size: %zu bytes\n", hdr_sz);
+    printf("  Code offset: %zu bytes (page-aligned)\n", code_off);
+    printf("  Code size:   %zu bytes\n", code_size);
     return b;
 }
 
@@ -78,7 +78,7 @@ build_header(macho_builder_t *b)
 
     h->header.sizeofcmds = load_sz;
 
-    DBG("cmds=%u, sizeofcmds=%u\n",
+    printf("cmds=%u, sizeofcmds=%u\n",
            h->header.ncmds, h->header.sizeofcmds);
 }
 
@@ -99,7 +99,7 @@ build_page0(macho_builder_t *b)
     h->pagezero_segment.nsects   = 0;
     h->pagezero_segment.flags    = 0;
 
-    DBG("Built __PAGEZERO segment\n");
+    printf("Built __PAGEZERO segment\n");
 }
 
 static void
@@ -139,7 +139,7 @@ build_text(macho_builder_t *b)
     h->text_section.reserved2  = 0;
     h->text_section.reserved3  = 0;
 
-    DBG("Built __TEXT segment (vmaddr=0x%llx, size=0x%llx)\n",
+    printf("Built __TEXT segment (vmaddr=0x%llx, size=0x%llx)\n",
            h->text_segment.vmaddr, h->text_segment.vmsize);
 }
 
@@ -168,7 +168,7 @@ build_linkedit(macho_builder_t *b)
     h->linkedit_segment.nsects   = 0;
     h->linkedit_segment.flags    = 0;
 
-    DBG("Built __LINKEDIT segment (fileoff=0x%llx)\n",
+    printf("Built __LINKEDIT segment (fileoff=0x%llx)\n",
            h->linkedit_segment.fileoff);
 }
 
@@ -184,7 +184,7 @@ build_symtab(macho_builder_t *b)
     h->symtab_cmd.stroff  = b->strtab_offset;
     h->symtab_cmd.strsize = b->strtab_size;
 
-    DBG("Built LC_SYMTAB command (nsyms=%u)\n", h->symtab_cmd.nsyms);
+    printf("Built LC_SYMTAB command (nsyms=%u)\n", h->symtab_cmd.nsyms);
 }
 
 static void
@@ -196,7 +196,7 @@ build_dysymtab(macho_builder_t *b)
     h->dysymtab_cmd.cmd     = LC_DYSYMTAB;
     h->dysymtab_cmd.cmdsize = sizeof(struct dysymtab_command);
 
-    DBG("Built LC_DYSYMTAB command\n");
+    printf("Built LC_DYSYMTAB command\n");
 }
 
 static void
@@ -209,7 +209,7 @@ build_entry(macho_builder_t *b)
     h->entry_cmd.entryoff = b->code_offset;
     h->entry_cmd.stacksize = 0;
 
-    DBG("Built LC_MAIN command (entryoff=0x%llx)\n",
+    printf("Built LC_MAIN command (entryoff=0x%llx)\n",
            h->entry_cmd.entryoff);
 }
 
@@ -217,11 +217,11 @@ static void
 write_code(macho_builder_t *b, const uint8_t *code, size_t code_sz)
 {
     if (code_sz != b->code_size)
-        DBG("Code size mismatch (%zu vs %zu)\n", code_sz, b->code_size);
+        printf("Code size mismatch (%zu vs %zu)\n", code_sz, b->code_size);
 
     size_t aligned = ALIGN_P(code_sz);
     if (b->code_offset + aligned > b->capacity) {
-        DBG("Code offset: 0x%zx, aligned: 0x%zx, required: 0x%zx, capacity: 0x%zx\n",
+        printf("Code offset: 0x%zx, aligned: 0x%zx, required: 0x%zx, capacity: 0x%zx\n",
                b->code_offset, aligned, b->code_offset + aligned, b->capacity);
         return;
     }
@@ -230,7 +230,7 @@ write_code(macho_builder_t *b, const uint8_t *code, size_t code_sz)
     if (aligned > code_sz)
         memset(b->buffer + b->code_offset + code_sz, 0, aligned - code_sz);
 
-    DBG("Wrote %zu bytes at 0x%zx (aligned to %zu)\n",
+    printf("Wrote %zu bytes at 0x%zx (aligned to %zu)\n",
            code_sz, b->code_offset, aligned);
 }
 
@@ -281,7 +281,7 @@ macho_stuff(macho_builder_t *b)
 
     if (!b->code_size || b->code_size > 100 * 1024 * 1024) goto fail;
 
-    DBG("[+] Validation passed\n");
+    printf("[+] Validation passed\n");
     return true;
 
 fail:
@@ -293,17 +293,17 @@ uint8_t *
 wrap_macho(const uint8_t *code, size_t code_sz, size_t *out_sz)
 {
     if (!code || !code_sz || !out_sz) {
-        DBG("Invalid parameters\n");
+        printf("Invalid parameters\n");
         return NULL;
     }
     if (code_sz > 100 * 1024 * 1024) {
-        DBG("Code size too large (%zu bytes)\n", code_sz);
+        printf("Code size too large (%zu bytes)\n", code_sz);
         return NULL;
     }
 
     macho_builder_t *b = builder_init(code_sz);
     if (!b) {
-        DBG("Failed to initialize builder\n");
+        printf("Failed to initialize builder\n");
         return NULL;
     }
 
@@ -318,7 +318,7 @@ wrap_macho(const uint8_t *code, size_t code_sz, size_t *out_sz)
     init_symbol(b);
 
     if (!macho_stuff(b)) {
-        DBG("Validation failed\n");
+        printf("Validation failed\n");
         builder_free(b);
         return NULL;
     }
@@ -330,7 +330,7 @@ wrap_macho(const uint8_t *code, size_t code_sz, size_t *out_sz)
     b->buffer = NULL;
 
     builder_free(b);
-    DBG("Built Mach-O (%zu bytes)\n", final_sz);
+    printf("Built Mach-O (%zu bytes)\n", final_sz);
     return res;
 }
 

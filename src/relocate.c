@@ -1,5 +1,12 @@
 #include <aether.h>
 
+#if defined(__aarch64__) || defined(_M_ARM64)
+// ARM64 stub for x86 function
+bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_t *inst, memread_fn mem_read) {
+    return false;
+}
+#endif
+
 static bool code_addr(uint64_t imm, uint64_t base_addr, size_t size);
 static void jump_table(uint8_t *code, size_t size, size_t table_offset,
                            uint64_t base_addr, reloc_table_t *table);
@@ -53,6 +60,54 @@ bool reloc_add(reloc_table_t *table, size_t offset, size_t inst_start,
 }
 
 /* x86-64 relocation  */
+static void scan_x86(uint8_t *code, size_t size,
+                                 reloc_table_t *table, uint64_t base_addr);
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+static void scan_arm64(uint8_t *code, size_t size, reloc_table_t *table, uint64_t base_addr) {
+    size_t offset = 0;
+    
+    while (offset + 4 <= size) {
+        arm64_inst_t inst;
+        if (!decode_arm64(code + offset, &inst) || !inst.valid) {
+            offset += 4;
+            continue;
+        }
+        
+        /* Handle ARM64 relocations */
+        if (inst.type == ARM_OP_BRANCH || inst.type == ARM_OP_BRANCH_LINK) {
+            if (inst.imm != 0) {
+                int32_t branch_offset = (int32_t)inst.imm;
+                uint64_t target_addr = base_addr + offset + 4 + branch_offset;
+                
+                if (iz_internal(target_addr, base_addr, size)) {
+                    reloc_add(table, offset, offset, 4, RELOC_BRANCH, 
+                             branch_offset, target_addr, true);
+                }
+            }
+        }
+        
+        /* Handle ADRP/ADD pairs for address loading */
+        if (inst.type == ARM_OP_ADRP && offset + 8 <= size) {
+            arm64_inst_t next_inst;
+            if (decode_arm64(code + offset + 4, &next_inst) && 
+                next_inst.valid && next_inst.type == ARM_OP_ADD) {
+                
+                uint64_t page_base = (base_addr + offset) & ~0xFFF;
+                uint64_t target_addr = page_base + (inst.imm << 12) + next_inst.imm;
+                
+                if (iz_internal(target_addr, base_addr, size)) {
+                    reloc_add(table, offset, offset, 8, RELOC_ADRP_ADD,
+                             (int32_t)(target_addr - (base_addr + offset)), target_addr, true);
+                }
+            }
+        }
+        
+        offset += 4;
+    }
+}
+#endif
+
 static void scan_x86(uint8_t *code, size_t size,
                                  reloc_table_t *table, uint64_t base_addr)
 {
@@ -150,7 +205,7 @@ static void scan_x86(uint8_t *code, size_t size,
              inst.opcode[0] == 0xAE || inst.opcode[0] == 0xAF)) {
             /* These are tricky RSI/RDI values are runtime-dependent, Best we can do is mark them as special in the relocation table
                         so they can be protected from mutation */
-             DBG("[Reloc] String instruction at 0x%zx (REP %02x)\n", 
+             printf("[Reloc] String instruction at 0x%zx (REP %02x)\n", 
                 offset, inst.opcode[0]);
         }
         
@@ -188,6 +243,7 @@ static void scan_x86(uint8_t *code, size_t size,
         
         /* Detect computed jumps */
         if (inst.opcode[0] == 0xFF && inst.has_modrm) {
+#if defined(__x86_64__) || defined(_M_X64)
             uint8_t reg = modrm_reg(inst.modrm);
             uint8_t mod = (inst.modrm >> 6) & 3;
             uint8_t rm = inst.modrm & 7;
@@ -230,98 +286,13 @@ static void scan_x86(uint8_t *code, size_t size,
                     }
                 }
             }
+#endif
         }
         
         offset += len ? len : 1;
     }
 }
 
-/* Scan ARM64 code for relocatable references */
-static void scan_arm64(uint8_t *code, size_t size,
-                                    reloc_table_t *table, uint64_t base_addr) {
-    size_t i = 0;
-    
-    while (i < size - 4) {
-        uint32_t insn = *(uint32_t*)(code + i);
-        
-        /* B/BL */
-        if ((insn & 0x7C000000) == 0x14000000) {
-            int32_t imm26 = (int32_t)(insn & 0x03FFFFFF);
-            if (imm26 & 0x02000000) imm26 |= 0xFC000000; 
-            
-            int64_t offset = imm26 * 4;
-            uint64_t target = base_addr + i + offset;
-            
-            uint8_t type = (insn & 0x80000000) ? RELOC_CALL : RELOC_JMP;
-            reloc_add(table, i, i, 4, type, offset, target, true);
-        }
-        
-        /* B.cond */
-        else if ((insn & 0xFF000010) == 0x54000000) {
-            int32_t imm19 = (int32_t)((insn >> 5) & 0x7FFFF);
-            if (imm19 & 0x40000) imm19 |= 0xFFF80000; 
-            
-            int64_t offset = imm19 * 4;
-            uint64_t target = base_addr + i + offset;
-            reloc_add(table, i, i, 4, RELOC_JMP, offset, target, true);
-        }
-        
-        /* CBZ/CBNZ */
-        else if ((insn & 0x7E000000) == 0x34000000) {
-            int32_t imm19 = (int32_t)((insn >> 5) & 0x7FFFF);
-            if (imm19 & 0x40000) imm19 |= 0xFFF80000;
-            
-            int64_t offset = imm19 * 4;
-            uint64_t target = base_addr + i + offset;
-            reloc_add(table, i, i, 4, RELOC_JMP, offset, target, true);
-        }
-        
-        /* ADRP */
-        else if ((insn & 0x9F000000) == 0x90000000) {
-            int64_t immlo = (insn >> 29) & 0x3;
-            int64_t immhi = (insn >> 5) & 0x7FFFF;
-            int64_t imm = (immhi << 2) | immlo;
-            if (imm & 0x100000) imm |= 0xFFFFFFFFFFE00000LL; 
-            
-            int64_t offset = imm * 4096; /* Page offset */
-            uint64_t target = (base_addr + i) & ~0xFFFULL;
-            target += offset;
-            reloc_add(table, i, i, 4, RELOC_LEA, offset, target, true);
-        }
-        
-        /* ADR */
-        else if ((insn & 0x9F000000) == 0x10000000) {
-            int64_t immlo = (insn >> 29) & 0x3;
-            int64_t immhi = (insn >> 5) & 0x7FFFF;
-            int64_t imm = (immhi << 2) | immlo;
-            if (imm & 0x100000) imm |= 0xFFFFFFFFFFE00000LL; 
-            
-            uint64_t target = base_addr + i + imm;
-            reloc_add(table, i, i, 4, RELOC_LEA, imm, target, true);
-        }
-        
-        /* load from PC address */
-        else if ((insn & 0x3B000000) == 0x18000000) {
-            int32_t imm19 = (int32_t)((insn >> 5) & 0x7FFFF);
-            if (imm19 & 0x40000) imm19 |= 0xFFF80000;
-            
-            int64_t offset = imm19 * 4;
-            uint64_t target = base_addr + i + offset;
-            reloc_add(table, i, i, 4, RELOC_LEA, offset, target, true);
-        }
-        
-        else if ((insn & 0x7E000000) == 0x36000000 || (insn & 0x7E000000) == 0x37000000) {
-            int32_t imm14 = (int32_t)((insn >> 5) & 0x3FFF);
-            if (imm14 & 0x2000) imm14 |= 0xFFFFC000;
-            
-            int64_t offset = imm14 * 4;
-            uint64_t target = base_addr + i + offset;
-            reloc_add(table, i, i, 4, RELOC_JMP, offset, target, true);
-        }
-        
-        i += 4;
-    }
-}
 
 void reloc_free(reloc_table_t *table) {
     if (!table) return;
@@ -347,7 +318,7 @@ reloc_table_t* reloc_scan(uint8_t *code, size_t size, uint64_t base_addr, uint8_
     if (arch == ARCH_X86) {
         scan_x86(code, size, table, base_addr);
     }
-#if defined(ARCH_ARM)
+#if defined(__aarch64__) || defined(_M_ARM64)
     else if (arch == ARCH_ARM) {
         scan_arm64(code, size, table, base_addr);
     }
@@ -704,7 +675,7 @@ bool reloc_update(reloc_table_t *table,
         if (inst_start == SIZE_MAX) {
             inst_start = 0;
         } else if (inst_start >= code_size) {
-            DBG("[!] Invalid instruction_start 0x%zx >= code_size 0x%zx for reloc at 0x%zx\n", 
+            printf("[!] Invalid instruction_start 0x%zx >= code_size 0x%zx for reloc at 0x%zx\n", 
                 inst_start, code_size, rel->offset);
             return false;
         }
@@ -725,7 +696,7 @@ bool reloc_update(reloc_table_t *table,
 
         if (inst_len > 0 && insertion_offset > inst_start &&
             insertion_offset < inst_start + inst_len) {
-            DBG("[!] Insertion at 0x%zx inside instruction at 0x%zx (len=%zu)\n",
+            printf("[!] Insertion at 0x%zx inside instruction at 0x%zx (len=%zu)\n",
                 insertion_offset, inst_start, inst_len);
             return false;
         }
@@ -797,7 +768,7 @@ bool reloc_update(reloc_table_t *table,
                 }
 
                 if (!found) {
-                    DBG("[!] Cannot find at 0x%zx\n", rel->offset);
+                    printf("[!] Cannot find at 0x%zx\n", rel->offset);
                     Oz_errors++;
                     continue;
                 }
@@ -810,7 +781,7 @@ bool reloc_update(reloc_table_t *table,
                     inst_len = inst.len;
                     rel->instruction_len = inst_len;
                 } else {
-                    DBG("[!] Failed to decode at 0x%zx for relocation\n", inst_start);
+                    printf("[!] Failed to decode at 0x%zx for relocation\n", inst_start);
                     Oz_errors++;
                     continue;
                 }
@@ -824,7 +795,7 @@ bool reloc_update(reloc_table_t *table,
             uint64_t new_pc = base_addr + inst_start + inst_len;
             int64_t new_disp = (int64_t)rel->target - (int64_t)new_pc;
             if (new_disp < INT32_MIN || new_disp > INT32_MAX) {
-                DBG("[!] Relocation at 0x%zx: displacement overflow (%lld)\n", rel->offset, new_disp);
+                printf("[!] Relocation at 0x%zx: displacement overflow (%lld)\n", rel->offset, new_disp);
                 Oz_errors++;
                 continue;
             }
@@ -905,7 +876,7 @@ bool reloc_update(reloc_table_t *table,
 
     if (Oz_errors > 0) {return false;}
     
-    DBG("[+] %zu offsets updated %zu \n",
+    printf("[+] %zu offsets updated %zu \n",
         up_offst, up_disp);
     return true;
 }
@@ -935,18 +906,18 @@ bool reloc_expanziv(reloc_table_t *table, size_t current_size,
         
         if (worst_disp < -max_safe_disp || worst_disp > max_safe_disp) {
             count_0z++;
-            DBG("[Reloc] at 0x%zx would with size %zu (worst-case disp=%lld)\n",
+            printf("[Reloc] at 0x%zx would with size %zu (worst-case disp=%lld)\n",
                    rel->offset, proposed_size, worst_disp);
         }
     }
     
     if (count_0z > 0) { 
-        DBG("[Reloc] NAH %zu/%zu size %zu\n",
+        printf("[Reloc] NAH %zu/%zu size %zu\n",
                count_0z, checked, proposed_size);
         return false;
     }
     
-    DBG("[Reloc] AIGHT %zu size %zu\n",
+    printf("[Reloc] AIGHT %zu size %zu\n",
            checked, proposed_size);
     return true;
 }
@@ -1010,7 +981,7 @@ size_t reloc_overz(reloc_table_t *table, uint8_t *code, size_t code_size,
 /* I'm an engineer at heart */
 void reloc_stats(reloc_table_t *table, size_t code_size) {
     if (!table) {
-        DBG("[Reloc] No relocation table\n");
+        printf("[Reloc] No relocation table\n");
         return;
     }
     
@@ -1036,9 +1007,9 @@ void reloc_stats(reloc_table_t *table, size_t code_size) {
         }
     }
     
-    DBG("[Reloc] Total: %zu entries\n", table->count);
-    DBG("[Reloc] Internal: %zu, External: %zu\n", internal, external);
-    DBG("[Reloc] By type: CALL=%zu JMP=%zu LEA=%zu ABS64=%zu REL32=%zu\n",
+    printf("[Reloc] Total: %zu entries\n", table->count);
+    printf("[Reloc] Internal: %zu, External: %zu\n", internal, external);
+    printf("[Reloc] By type: CALL=%zu JMP=%zu LEA=%zu ABS64=%zu REL32=%zu\n",
            by_type[RELOC_CALL], by_type[RELOC_JMP], by_type[RELOC_LEA],
            by_type[RELOC_ABS64], by_type[RELOC_REL32]);
 }

@@ -6,7 +6,7 @@
 static void write_rel32(uint8_t *p, int32_t v) {memcpy(p, &v, sizeof(v));}
 static void write_u64(uint8_t *p, uint64_t v) {memcpy(p, &v, sizeof(v));}
 
-#if defined(ARCH_ARM)
+#if defined(__aarch64__) || defined(_M_ARM64)
 static inline uint8_t random_arm_reg(chacha_state_t *rng) {
     if (!rng) return 0;
     
@@ -179,6 +179,7 @@ __attribute__((always_inline)) inline void forge_ghost_x86(uint8_t *buf, size_t 
 }
 
 /* Generate ARM64 opaque predicates always-taken/never-taken branches with dead code */
+#if defined(__aarch64__) || defined(_M_ARM64)
 __attribute__((always_inline)) inline void forge_ghost_arm(uint8_t *buf, size_t *len, uint32_t value, chacha_state_t *rng) {
     if (!buf || !len || !rng) return;
     
@@ -270,11 +271,12 @@ __attribute__((always_inline)) inline void forge_ghost_arm(uint8_t *buf, size_t 
         }
     }
 }
+#endif  /* __aarch64__ || _M_ARM64 */
 
 /* Unified opaque predicate generator */
-#if defined(ARCH_X86)
+#if defined(__x86_64__) || defined(_M_X64)
     #define forge_ghost forge_ghost_x86
-#elif defined(ARCH_ARM)
+#elif defined(__aarch64__) || defined(_M_ARM64)
     #define forge_ghost forge_ghost_arm
 #endif
 

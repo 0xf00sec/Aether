@@ -34,6 +34,7 @@
 #include <stdatomic.h>
 
 #include <mach-o/dyld.h>
+#include <mach/mach.h>
 #include <mach-o/loader.h>
 #include <mach-o/getsect.h>
 #include <mach-o/fat.h>
@@ -56,10 +57,9 @@
 #include <CommonCrypto/CommonDigest.h>
 #include <CoreFoundation/CoreFoundation.h>
 
-#include <immintrin.h>
-
 /* Architecture-specific register definitions */
 #if defined(__x86_64__) || defined(_M_X64)
+    #include <immintrin.h>
     #include "decoder_x86.h"
 #elif defined(__aarch64__) || defined(_M_ARM64)
     #include "decoder_arm64.h"
@@ -192,6 +192,10 @@ typedef struct {
 /* For inline mutator referenced before its definition */
 typedef struct engine_context_s engine_context_t;
 void _mut8(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen, engine_context_t *ectx);
+
+/* Forward declarations for instruction types */
+typedef struct x86_inst_s x86_inst_t;
+typedef struct arm64_inst_s arm64_inst_t;
 
 /* Core typedefs and structs */
 typedef struct {
@@ -367,7 +371,7 @@ typedef enum {
     ARM_REG_X29,   /* FP (frame pointer) */
     ARM_REG_X30,   /* LR (link register) */
     ARM_REG_SP,    /* Stack pointer (X31 in encoding) */
-    ARM_REG_PC     /* Program counter (not encoded as X register) */
+    ARM_REG_PC_ENUM     /* Program counter (not encoded as X register) */
 } arm_reg_t;
 
 #define ARM64_REG_X30 ARM_REG_X30
@@ -393,7 +397,7 @@ typedef enum {
 } arm_condition_t;
 
 /* ARM64 instruction structure */
-typedef struct {
+struct arm64_inst_s {
     uint32_t raw;
     uint8_t len;
     uint8_t opcode_len;
@@ -433,10 +437,23 @@ typedef struct {
     uint8_t regs_written[2];
     uint8_t num_regs_read;
     uint8_t num_regs_written;
-} arm64_inst_t;
+};
+
+bool decode_arm64(const uint8_t *code, arm64_inst_t *out);
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+static inline bool decode_arm64_withme(const uint8_t *code, size_t size, uintptr_t ip, arm64_inst_t *inst, void *ctx) {
+    (void)size; (void)ip; (void)ctx;
+    return decode_arm64(code, inst);
+}
+#endif
+
+#if defined(__x86_64__) || defined(_M_X64)
+bool decode_x86_withme(const uint8_t *code, size_t max_len, uint64_t addr, x86_inst_t *inst, void *ctx);
+#endif
 
 /* x86 instruction */
-typedef struct {
+struct x86_inst_s {
     uint8_t raw[15];
     uint8_t len;
     uint8_t prefixes;
@@ -488,7 +505,7 @@ typedef struct {
     size_t imm_offset;          
     bool has_imm;                /* Whether instruction has immediate */
     bool is_rel_imm;            
-} x86_inst_t;
+};
 
 typedef struct {
     uint64_t orig_va;
@@ -599,6 +616,8 @@ typedef struct {
 #define RELOC_CALL      3  /* Call instruction */
 #define RELOC_JMP       4  /* Jump instruction */
 #define RELOC_LEA       5  /* LEA with RIP-relative */
+#define RELOC_BRANCH    6  /* ARM64 branch instruction */
+#define RELOC_ADRP_ADD  7  /* ARM64 ADRP/ADD pair */
 
 typedef struct {
     uint8_t *ogicode;
@@ -766,6 +785,7 @@ size_t crypt_payload(const int mode,
                             const uint8_t *src,
                             uint8_t *dst,
                             const size_t size);
+size_t decipher(const uint8_t *key, const uint8_t *iv, const uint8_t *src, uint8_t *dst, const size_t size);
 void chacha20_block(const uint32_t[8],uint32_t,const uint32_t[3],uint32_t[16]);
 void chacha20_init(chacha_state_t*,const uint8_t*,size_t);
 uint32_t chacha20_random(chacha_state_t*);
@@ -790,7 +810,7 @@ void init_engine(engine_context_t *ctx);
 
 /* Decoder */
 bool decode_x86(const uint8_t *code, uintptr_t ip, x86_inst_t *inst, memread_fn mem_read);
-bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_t *inst, memread_fn mem_read);
+bool decode_x86_withme(const uint8_t *code, size_t max_len, uint64_t addr, x86_inst_t *inst, void *ctx);
 
 /* Expansion */
 bool apply_expansion(uint8_t *code, size_t *size, size_t offset, 
@@ -846,6 +866,11 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
 /* Control flow */
 void flatline_flow(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng);
 void shuffle_blocks(uint8_t *code, size_t size, void *rng);
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+void flatline_flow_arm64(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng);
+void shuffle_blocks_arm64(uint8_t *code, size_t size, chacha_state_t *rng);
+#endif
 
 /* Validation */
 bool is_chunk_ok(const uint8_t *chunk, size_t max_len);

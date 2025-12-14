@@ -2,7 +2,7 @@
 
 /* http://ref.x86asm.net/coder64.html */
 
-#if defined(ARCH_X86)
+#if defined(__x86_64__) || defined(_M_X64)
  
  /* modrm_reg - Extracts the reg field from a ModR/M byte. */
 uint8_t modrm_reg(uint8_t m);
@@ -307,7 +307,11 @@ static void parse_ea_and_disp(x86_inst_t *inst, const uint8_t **p, const uint8_t
  * ModR/M, SIB, displacements, immediates, RIP-relative addressing.
  * Max 4 legacy prefixes, max 15 bytes total per Intel spec.
  */
-bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_t *inst, memread_fn mem_read) {
+bool decode_x86_withme(const uint8_t *code, size_t max_len, uint64_t addr, x86_inst_t *inst, void *ctx) {
+    memread_fn mem_read = (memread_fn)ctx;
+    uintptr_t ip = (uintptr_t)addr;
+    size_t size = max_len;
+    
     (void)mem_read;
     memset(inst, 0, sizeof(*inst));
     inst->valid = true;
@@ -432,7 +436,7 @@ bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_
 
 /* Decode x86-64 instruction  */
 bool decode_x86(const uint8_t *code, uintptr_t ip, x86_inst_t *inst, memread_fn mem_read) {
-    return decode_x86_withme(code, 15, ip, inst, mem_read);
+    return decode_x86_withme(code, 15, (uint64_t)ip, inst, (void*)mem_read);
 }
 
 #endif  

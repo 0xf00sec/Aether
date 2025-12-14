@@ -2,7 +2,7 @@
 
 /* https://www.coranac.com/tonc/text/asm.htm */
 
-#if defined(ARCH_ARM)
+#if defined(__aarch64__) || defined(_M_ARM64)
 
 /* Read u32 little-endian */
 static inline uint32_t rd_u32(const uint8_t *p) {
@@ -572,4 +572,4 @@ bool decode_arm64(const uint8_t *code, arm64_inst_t *out) {
     return false;
 }
 
-#endif  /* ARCH_ARM    */
+#endif  /* __aarch64__ || _M_ARM64 */
