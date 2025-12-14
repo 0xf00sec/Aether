@@ -3,10 +3,13 @@
 #include <decoder_arm64.h>
 #include <decoder_x86.h>
 
+
+
 #if defined(__aarch64__) || defined(_M_ARM64)
-static bool sketch_flow_arm64(uint8_t *code, size_t size, flowmap *cfg);
-static void shuffle_blocks_arm64(uint8_t *code, size_t size, chacha_state_t *rng);
-static void flatline_flow_arm64(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng);
+bool sketch_flow_arm64(uint8_t *code, size_t size, flowmap *cfg);
+void shuffle_blocks_arm64(uint8_t *code, size_t size, chacha_state_t *rng);
+void flatline_flow_arm64(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng);
+static inline void emit_trampoline_arm64(uint8_t *buf, size_t *off, uint64_t target, bool is_call);
 #endif
 
 void init_engine(engine_context_t *ctx) {
@@ -90,7 +93,7 @@ void boot_live(liveness_state_t *state) {
     
     memset(state, 0, sizeof(*state));
     
-#if defined(ARCH_X86)
+#if defined(__x86_64__) || defined(_M_X64)
     state->num_regs = 16;
     state->arch_type = ARCH_X86;
     
@@ -106,7 +109,7 @@ void boot_live(liveness_state_t *state) {
     state->regs[4].iz_live = true;
     state->regs[5].iz_live = true;
     
-#elif defined(ARCH_ARM)
+#elif defined(__aarch64__) || defined(_M_ARM64)
     state->num_regs = 32;
     state->arch_type = ARCH_ARM;
     
@@ -132,7 +135,7 @@ void boot_live(liveness_state_t *state) {
 void pulse_live(liveness_state_t *state, size_t offset, const void *inst_ptr) {
     if (!state || !inst_ptr) return;
     
-#if defined(ARCH_X86)
+#if defined(__x86_64__) || defined(_M_X64)
     const x86_inst_t *inst = (const x86_inst_t *)inst_ptr;
     if (!inst || !inst->valid) return;
     
@@ -248,7 +251,7 @@ void pulse_live(liveness_state_t *state, size_t offset, const void *inst_ptr) {
         if (state->num_regs > 2) state->regs[2].last_use = offset;
     }
     
-#elif defined(ARCH_ARM)
+#elif defined(__aarch64__) || defined(_M_ARM64)
     const arm64_inst_t *inst = (const arm64_inst_t *)inst_ptr;
     if (!inst || !inst->valid) return;
     
@@ -300,9 +303,9 @@ void pulse_live(liveness_state_t *state, size_t offset, const void *inst_ptr) {
 }
 
 static inline bool is_stackp(uint8_t reg) { 
-#if defined(ARCH_X86)
+#if defined(__x86_64__) || defined(_M_X64)
     return reg == 4 || reg == 5; /*  RSP or RBP */
-#elif defined(ARCH_ARM)
+#elif defined(__aarch64__) || defined(_M_ARM64)
     return reg == 31 || reg == 29 || reg == 30; /* SP, FP, LR */
 #else
     return reg == 4 || reg == 5;
@@ -329,7 +332,7 @@ static inline bool is_protected(size_t offset, engine_context_t *ctx) {
     return false;
 }
 
-#if defined(ARCH_ARM)
+#if defined(__aarch64__) || defined(_M_ARM64)
 static inline bool arm64_volatile(uint8_t reg) {
     return reg <= 18;
 }
@@ -414,7 +417,7 @@ uint8_t jack_reg(const liveness_state_t *state, uint8_t original_reg,
         return original_reg;
     }
     
-#if defined(ARCH_ARM)
+#if defined(__aarch64__) || defined(_M_ARM64)
     return jack_reg_arm64(state, original_reg, current_offset, rng);
     
 #elif defined(ARCH_X86)
@@ -475,11 +478,11 @@ uint8_t jack_reg(const liveness_state_t *state, uint8_t original_reg,
 }
 
 __attribute__((always_inline)) inline bool is_op_ok(const uint8_t *code) {
-#if defined(ARCH_X86)
+#if defined(__x86_64__) || defined(_M_X64)
     x86_inst_t inst;
     if (!decode_x86_withme(code, 16, 0, &inst, NULL)) return false;
     return !inst.ring0 && inst.valid;
-#elif defined(ARCH_ARM)
+#elif defined(__aarch64__) || defined(_M_ARM64)
     arm64_inst_t inst;
     if (!decode_arm64(code, &inst)) return false;
     return inst.valid && !inst.ring0;
@@ -489,11 +492,11 @@ __attribute__((always_inline)) inline bool is_op_ok(const uint8_t *code) {
 }
 
 size_t snap_len(const uint8_t *code, size_t maxlen) {
-#if defined(ARCH_X86)
+#if defined(__x86_64__) || defined(_M_X64)
     if (maxlen == 0) return 0;
     x86_inst_t inst;
     return decode_x86_withme(code, maxlen, 0, &inst, NULL) ? inst.len : 0;
-#elif defined(ARCH_ARM)
+#elif defined(__aarch64__) || defined(_M_ARM64)
     if (maxlen < 4) return 0;
     arm64_inst_t inst;
     return decode_arm64(code, &inst) ? 4 : 0;
@@ -506,7 +509,7 @@ size_t snap_len(const uint8_t *code, size_t maxlen) {
 __attribute__((always_inline)) inline bool is_chunk_ok(const uint8_t *code, size_t max_len) {
     if (!code || max_len == 0) return false;
 
-#if defined(ARCH_ARM) && defined(__aarch64__)
+#if defined(__aarch64__) || defined(_M_ARM64)
     /*  Must be 4-byte aligned */
     if ((max_len % 4) != 0) return false;
     
@@ -564,7 +567,7 @@ __attribute__((always_inline)) inline bool is_chunk_ok(const uint8_t *code, size
 void spew_trash(uint8_t *buf, size_t *len, chacha_state_t *rng) {
     if (!buf || !len || !rng) return;
 
-#if defined(ARCH_ARM)
+#if defined(__aarch64__) || defined(_M_ARM64)
     {
         uint8_t r1 = random_arm_reg(rng);
         uint8_t r2 = random_arm_reg(rng);
@@ -694,7 +697,7 @@ static inline bool branch_if(const x86_inst_t *inst) {
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64)
-static bool sketch_flow_arm64(uint8_t *code, size_t size, flowmap *cfg) {
+bool sketch_flow_arm64(uint8_t *code, size_t size, flowmap *cfg) {
     if (!code || !cfg || size < 4 || (size % 4) != 0) {
         if (cfg) *cfg = (flowmap){0};
         return false;
@@ -1096,7 +1099,7 @@ bool sketch_flow(uint8_t *code, size_t size, flowmap *cfg) {
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64)
-static void flatline_flow_arm64(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng) {
+void flatline_flow_arm64(uint8_t *code, size_t size, flowmap *cfg, chacha_state_t *rng) {
     if (!code || !cfg || !rng || cfg->num_blocks < 3) return;
     if ((size % 4) != 0) return;
     if (!cfg->blocks || cfg->num_blocks == 0) return;
@@ -1666,7 +1669,7 @@ static inline void emit_trampoline_arm64(uint8_t *buf, size_t *off, uint64_t tar
 }
 
 /* Reorder ARM64 basic blocks and fix up all branch instructions */
-static void shuffle_blocks_arm64(uint8_t *code, size_t size, chacha_state_t *rng) {
+void shuffle_blocks_arm64(uint8_t *code, size_t size, chacha_state_t *rng) {
     if (!code || !rng || size < 8 || (size % 4) != 0) return;
     
     flowmap cfg;
@@ -1809,6 +1812,7 @@ static inline void emit_trampoline(uint8_t *buf, size_t *off, uint64_t target, b
     if (is_call) { buf[(*off)++] = 0xFF; buf[(*off)++] = 0xD0; }
     else         { buf[(*off)++] = 0xFF; buf[(*off)++] = 0xE0; }
 }
+#endif
 
 void shuffle_blocks(uint8_t *code, size_t size, void *rng) {
     if (!code || !rng) return;
@@ -2819,10 +2823,11 @@ void scramble_arm64(uint8_t *code, size_t size, chacha_state_t *rng, unsigned ge
 }
 #endif  // __aarch64__ || _M_ARM64
 
+#if defined(__x86_64__) || defined(_M_X64)
 void scramble_x86(uint8_t *code, size_t size, chacha_state_t *rng, unsigned gen,
-                        muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity,
-                        engine_context_t *ectx) {
-    if (!code || !rng) return;
+                    muttt_t *log, liveness_state_t *liveness, unsigned mutation_intensity,
+                    engine_context_t *ectx) {
+    if (!code || !rng || size < 4) return;
     
     size_t offset = 0;
     size_t view_size = size; /* track effective size for memmove bounds */
