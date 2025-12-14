@@ -205,7 +205,7 @@ static void scan_x86(uint8_t *code, size_t size,
              inst.opcode[0] == 0xAE || inst.opcode[0] == 0xAF)) {
             /* These are tricky RSI/RDI values are runtime-dependent, Best we can do is mark them as special in the relocation table
                         so they can be protected from mutation */
-             printf("[Reloc] String instruction at 0x%zx (REP %02x)\n", 
+             DBG("[Reloc] String instruction at 0x%zx (REP %02x)\n", 
                 offset, inst.opcode[0]);
         }
         
@@ -675,7 +675,7 @@ bool reloc_update(reloc_table_t *table,
         if (inst_start == SIZE_MAX) {
             inst_start = 0;
         } else if (inst_start >= code_size) {
-            printf("[!] Invalid instruction_start 0x%zx >= code_size 0x%zx for reloc at 0x%zx\n", 
+            DBG("[!] Invalid instruction_start 0x%zx >= code_size 0x%zx for reloc at 0x%zx\n", 
                 inst_start, code_size, rel->offset);
             return false;
         }
@@ -696,7 +696,7 @@ bool reloc_update(reloc_table_t *table,
 
         if (inst_len > 0 && insertion_offset > inst_start &&
             insertion_offset < inst_start + inst_len) {
-            printf("[!] Insertion at 0x%zx inside instruction at 0x%zx (len=%zu)\n",
+            DBG("[!] Insertion at 0x%zx inside instruction at 0x%zx (len=%zu)\n",
                 insertion_offset, inst_start, inst_len);
             return false;
         }
@@ -768,7 +768,7 @@ bool reloc_update(reloc_table_t *table,
                 }
 
                 if (!found) {
-                    printf("[!] Cannot find at 0x%zx\n", rel->offset);
+                    DBG("[!] Cannot find at 0x%zx\n", rel->offset);
                     Oz_errors++;
                     continue;
                 }
@@ -781,7 +781,7 @@ bool reloc_update(reloc_table_t *table,
                     inst_len = inst.len;
                     rel->instruction_len = inst_len;
                 } else {
-                    printf("[!] Failed to decode at 0x%zx for relocation\n", inst_start);
+                    DBG("[!] Failed to decode at 0x%zx for relocation\n", inst_start);
                     Oz_errors++;
                     continue;
                 }
@@ -795,7 +795,7 @@ bool reloc_update(reloc_table_t *table,
             uint64_t new_pc = base_addr + inst_start + inst_len;
             int64_t new_disp = (int64_t)rel->target - (int64_t)new_pc;
             if (new_disp < INT32_MIN || new_disp > INT32_MAX) {
-                printf("[!] Relocation at 0x%zx: displacement overflow (%lld)\n", rel->offset, new_disp);
+                DBG("[!] Relocation at 0x%zx: displacement overflow (%lld)\n", rel->offset, new_disp);
                 Oz_errors++;
                 continue;
             }
@@ -876,7 +876,7 @@ bool reloc_update(reloc_table_t *table,
 
     if (Oz_errors > 0) {return false;}
     
-    printf("[+] %zu offsets updated %zu \n",
+    DBG("[+] %zu offsets updated %zu \n",
         up_offst, up_disp);
     return true;
 }
@@ -906,18 +906,18 @@ bool reloc_expanziv(reloc_table_t *table, size_t current_size,
         
         if (worst_disp < -max_safe_disp || worst_disp > max_safe_disp) {
             count_0z++;
-            printf("[Reloc] at 0x%zx would with size %zu (worst-case disp=%lld)\n",
+            DBG("[Reloc] at 0x%zx would with size %zu (worst-case disp=%lld)\n",
                    rel->offset, proposed_size, worst_disp);
         }
     }
     
     if (count_0z > 0) { 
-        printf("[Reloc] NAH %zu/%zu size %zu\n",
+        DBG("[Reloc] NAH %zu/%zu size %zu\n",
                count_0z, checked, proposed_size);
         return false;
     }
     
-    printf("[Reloc] AIGHT %zu size %zu\n",
+    DBG("[Reloc] AIGHT %zu size %zu\n",
            checked, proposed_size);
     return true;
 }
@@ -981,7 +981,7 @@ size_t reloc_overz(reloc_table_t *table, uint8_t *code, size_t code_size,
 /* I'm an engineer at heart */
 void reloc_stats(reloc_table_t *table, size_t code_size) {
     if (!table) {
-        printf("[Reloc] No relocation table\n");
+        DBG("[Reloc] No relocation table\n");
         return;
     }
     
@@ -1007,9 +1007,9 @@ void reloc_stats(reloc_table_t *table, size_t code_size) {
         }
     }
     
-    printf("[Reloc] Total: %zu entries\n", table->count);
-    printf("[Reloc] Internal: %zu, External: %zu\n", internal, external);
-    printf("[Reloc] By type: CALL=%zu JMP=%zu LEA=%zu ABS64=%zu REL32=%zu\n",
+    DBG("[Reloc] Total: %zu entries\n", table->count);
+    DBG("[Reloc] Internal: %zu, External: %zu\n", internal, external);
+    DBG("[Reloc] By type: CALL=%zu JMP=%zu LEA=%zu ABS64=%zu REL32=%zu\n",
            by_type[RELOC_CALL], by_type[RELOC_JMP], by_type[RELOC_LEA],
            by_type[RELOC_ABS64], by_type[RELOC_REL32]);
 }

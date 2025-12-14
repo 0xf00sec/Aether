@@ -404,10 +404,10 @@ void crit_tap(struct mach_header_64 *hdr, uint64_t text_vm_start,
         size_t original_count = *num_ranges;
         *num_ranges = write_idx + 1;
         
-        printf("[*] %zu regions (%zu external, merged from %zu)\n", 
+        DBG("[*] %zu regions (%zu external, merged from %zu)\n", 
                *num_ranges, protected_ext, original_count);
     } else {
-        printf("[*] %zu regions (%zu external)\n", *num_ranges, protected_ext);
+        DBG("[*] %zu regions (%zu external)\n", *num_ranges, protected_ext);
     }
 }
 
@@ -551,7 +551,7 @@ bool tx_Init(context_t *ctx, const uint8_t *code, size_t size,
         }
     }
 
-    printf("size=%zu, blocks=%zu\n", ctx->codesz, ctx->cfg.num_blocks);
+    DBG("size=%zu, blocks=%zu\n", ctx->codesz, ctx->cfg.num_blocks);
     
     return true;
 }
@@ -578,11 +578,11 @@ static void get_entry(const context_t *ctx) {
     }
 
     if (diff == 0) {
-        printf("[*] Entry diff: no changes across %zu bytes\n", len);
+        DBG("[*] Entry diff: no changes across %zu bytes\n", len);
         return;
     }
 
-    printf("[*] Entry diff: %zu/%zu bytes differ (first @ 0x%zx)\n", diff, len, first);
+    DBG("[*] Entry diff: %zu/%zu bytes differ (first @ 0x%zx)\n", diff, len, first);
 
     size_t start = first;
     if (start > 8) {
@@ -592,17 +592,17 @@ static void get_entry(const context_t *ctx) {
     }
     size_t end = MIN(len, start + 32);
 
-    printf("    Original: ");
+    DBG("    Original: ");
     for (size_t i = start; i < end; i++) {
-        printf("%02x", orig[i]);
-        if (i + 1 < end) printf(" ");
+        DBG("%02x", orig[i]);
+        if (i + 1 < end) DBG(" ");
     }
-    printf("\n    Mutated : ");
+    DBG("\n    Mutated : ");
     for (size_t i = start; i < end; i++) {
-        printf("%02x", mut[i]);
-        if (i + 1 < end) printf(" ");
+        DBG("%02x", mut[i]);
+        if (i + 1 < end) DBG(" ");
     }
-    printf("\n");
+    DBG("\n");
 }
 
 /* Inject opaque predicates at basic block boundaries */
@@ -693,7 +693,7 @@ static bool mix_opaques(context_t *ctx, unsigned intensity) {
     free(off_injection); 
     
     if (injection > 0) {
-        printf("[+] Got %zu \n", injection);
+        DBG("[+] Got %zu \n", injection);
     }
     
     return injection > 0;
@@ -792,7 +792,7 @@ static bool junkify(context_t *ctx, unsigned intensity) {
     free(off_injection);
     
     if (injection > 0) {
-        printf("[+] Injected %zu \n", injection);
+        DBG("[+] Injected %zu \n", injection);
     }
     
     return injection > 0;
@@ -817,7 +817,7 @@ static bool cflow_flatten(context_t *ctx, unsigned intensity) {
     
     /* Validate */
     if (!is_chunk_ok(ctx->working_code, ctx->codesz)) {
-        printf("[!] CFG failed\n");
+        DBG("[!] CFG failed\n");
         memcpy(ctx->working_code, backup, backup_size);
         ctx->codesz = backup_size;
         free(backup);
@@ -834,7 +834,7 @@ static bool shuffler(context_t *ctx, unsigned intensity) {
     
     if ((chacha20_random(&ctx->rng) % 100) >= (intensity * 10)) return false;
     
-    printf("[*] Shuffling blocks...\n");
+    DBG("[*] Shuffling blocks...\n");
     
     uint8_t *backup = malloc(ctx->codesz);
     if (!backup) return false;
@@ -850,7 +850,7 @@ static bool shuffler(context_t *ctx, unsigned intensity) {
     
     /* Validate */
     if (!is_chunk_ok(ctx->working_code, ctx->codesz)) {
-        printf("[!] Block shuffling failed\n");
+        DBG("[!] Block shuffling failed\n");
         memcpy(ctx->working_code, backup, backup_size);
         ctx->codesz = backup_size;
         free(backup);
@@ -1089,7 +1089,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
             
             size_t max_errors = (ctx->codesz / 200) + 1;
             if (de_errors > max_errors) {
-                printf("[!] Produced too many decode errors: %zu (max %zu)\n", 
+                DBG("[!] Produced too many decode errors: %zu (max %zu)\n", 
                     de_errors, max_errors);
                 free(liveness);
                 return false;
@@ -1113,7 +1113,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
     bool success = true;
     size_t size_before_expansion = ctx->codesz;
 
-    printf("[*] Size: %zu bytes, budget: %zu bytes\n", ctx->codesz, growth_budget);
+    DBG("[*] Size: %zu bytes, budget: %zu bytes\n", ctx->codesz, growth_budget);
 
     /* Allocate liveness_state_t on heap */
     liveness_state_t *liveness = calloc(1, sizeof(liveness_state_t));
@@ -1128,7 +1128,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
     /* Build relocation table before expansions */
     reloc_table_t *reloc_table = NULL;
     if (generation >= 5) {
-        printf("[*] Building relocation table...\n");
+        DBG("[*] Building relocation table...\n");
         reloc_table = reloc_scan(ctx->working_code, ctx->codesz, ctx->text_vm_start, ARCH_X86);
         if (reloc_table) {
             reloc_stats(reloc_table, ctx->codesz);
@@ -1139,7 +1139,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         unsigned depth = 1 + (generation / 10);
         if (depth > 3) depth = 3;
         
-        printf("[*] Chain expansion (depth=%u)...\n", depth);
+        DBG("[*] Chain expansion (depth=%u)...\n", depth);
 #if defined(__x86_64__) || defined(_M_X64)
         size_t new_size = expand_chains(
             ctx->working_code, ctx->codesz, max_expand_size,
@@ -1156,7 +1156,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         if (new_size > ctx->codesz && new_size <= max_expand_size) {
             ctx->codesz = new_size;
             ctx->current_growth = ctx->codesz - ctx->original_size;
-            printf("[*] Chain expansion %zu -> %zu bytes\n", size_before_expansion, ctx->codesz);
+            DBG("[*] Chain expansion %zu -> %zu bytes\n", size_before_expansion, ctx->codesz);
         }
     }
     
@@ -1183,7 +1183,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
     
     /* Validate expansion doesn't break relocations */
     if (reloc_table && ctx->codesz != size_before_expansion) {
-        printf("[*] Validating relocation ranges after expansion...\n");
+        DBG("[*] Validating relocation ranges after expansion...\n");
         
         /* Determine architecture */
 #if defined(__x86_64__) || defined(_M_X64)
@@ -1199,7 +1199,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         
         /* if is too aggressive */
         if (ctx->codesz > max_safe_size) {
-            printf("[!] Expansion too aggressive: %zu bytes (max safe: %zu)\n", 
+            DBG("[!] Expansion too aggressive: %zu bytes (max safe: %zu)\n", 
                 ctx->codesz, max_safe_size);
             goto rollback;
         }
@@ -1207,14 +1207,14 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         /* Validate all relocations will fit */
         if (!reloc_expanziv(reloc_table, size_before_expansion, 
                                       ctx->codesz, ctx->text_vm_start, arch_type)) {
-            printf("[!] Relocation validation failed - expansion would cause overflows\n");
+            DBG("[!] Relocation validation failed - expansion would cause overflows\n");
             goto rollback;
         }
     }
     
     /* Apply final relocation fixups if we did expansions */
     if (reloc_table && ctx->codesz != size_before_expansion) {
-        printf("[*] Applying final relocation fixups...\n");
+        DBG("[*] Applying final relocation fixups...\n");
         
 #if defined(__x86_64__) || defined(_M_X64)
         uint8_t arch_type = ARCH_X86;
@@ -1226,7 +1226,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         
         if (!reloc_apply(ctx->working_code, ctx->codesz, reloc_table, 
                         ctx->text_vm_start, arch_type)) {
-            printf("[!] Relocation fixup failed\n");
+            DBG("[!] Relocation fixup failed\n");
             goto rollback;
         }
         
@@ -1249,7 +1249,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
             ctx->cfg.blocks = NULL;
         }
         
-        printf("[*] Rebuilding CFG ...\n");
+        DBG("[*] Rebuilding CFG ...\n");
         if (!sketch_flow(ctx->working_code, ctx->codesz, &ctx->cfg)) {
             goto rollback;
         }
@@ -1290,7 +1290,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         if (generation >= 5 && ctx->cfg.num_blocks >= 3) {
             size_t size_before_opaques = ctx->codesz;
             if (mix_opaques(ctx, intensity)) {
-                printf("[+] Opaque: %zu -> %zu bytes (+%.1f%%)\n", 
+                DBG("[+] Opaque: %zu -> %zu bytes (+%.1f%%)\n", 
                     size_before_opaques, ctx->codesz,
                     100.0 * (ctx->codesz - size_before_opaques) / size_before_opaques);
                 
@@ -1311,7 +1311,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
         if (generation >= 3) {
             size_t size_before_junk = ctx->codesz;
             if (junkify(ctx, intensity)) {
-                printf("[+] Junk: %zu -> %zu bytes (+%.1f%%)\n", 
+                DBG("[+] Junk: %zu -> %zu bytes (+%.1f%%)\n", 
                     size_before_junk, ctx->codesz,
                     100.0 * (ctx->codesz - size_before_junk) / size_before_junk);
                 
@@ -1324,7 +1324,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
 
     /* Rebuild regions before mutations */
     crit_tap(ctx->hdr, ctx->text_vm_start, ctx->ranges, &ctx->numcheck, ctx->codesz, ctx->working_code);
-    printf("[*] Final: %zu regions \n", ctx->numcheck);
+    DBG("[*] Final: %zu regions \n", ctx->numcheck);
 
     /* Mutations */
     if (generation >= 3) {
@@ -1348,7 +1348,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
 #ifdef FOO
     if (generation >= 2 && ctx->cfg.num_blocks >= 2 && 
         (chacha20_random(&ctx->rng) % 100) < (intensity * 10)) {
-        printf("[*] Block shuffling...\n");
+        DBG("[*] Block shuffling...\n");
         
         uint8_t *backup = malloc(ctx->codesz);
         if (backup) {
@@ -1363,11 +1363,11 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
             
             /* Validate the result */
             if (!is_chunk_ok(ctx->working_code, ctx->codesz)) {
-                printf("[!] Block shuffling failed \n");
+                DBG("[!] Block shuffling failed \n");
                 memcpy(ctx->working_code, backup, backup_size);
                 ctx->codesz = backup_size;
             } else {
-                printf("[+] Block shuffling done \n");
+                DBG("[+] Block shuffling done \n");
             }
             
             free(backup);
@@ -1417,7 +1417,7 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
     }
     
     if (!mach_O(ctx->working_code, ctx->codesz)) {
-        printf("[-] mach_O() failed\n");
+        DBG("[-] mach_O() failed\n");
         goto rollback;
     }
 
@@ -1448,11 +1448,11 @@ bool mOrph(context_t *ctx, unsigned generation, size_t max_size) {
     
     size_t max_errors = ctx->codesz / 100;
     if (de_errors > max_errors) {
-        printf("[!] Too many errors: %zu (max %zu)\n", max_errors);
+        DBG("[!] Too many errors: %zu (max %zu)\n", max_errors);
         goto rollback;
     }
 
-    printf("Gen=%u, %zu->%zu (+%.1f%%)\n", generation, backup_sz, ctx->codesz,
+    DBG("Gen=%u, %zu->%zu (+%.1f%%)\n", generation, backup_sz, ctx->codesz,
         100.0 * (ctx->codesz - backup_sz) / backup_sz);
 
     free(liveness);
@@ -1612,7 +1612,7 @@ static bool dsk_mut(context_t *ctx, const char *binary_path,
     if (!verified)
         return false;
 
-    printf("[+] Write verified (%zu bytes)\n", original_size);
+    DBG("[+] Write verified (%zu bytes)\n", original_size);
     return true;
 }
 
@@ -1648,7 +1648,7 @@ static size_t embed_marker(uint8_t *code, size_t size, uint32_t generation) {
         size_t offset = (uint8_t*)existing - code;
         existing->generation = generation;
         existing->checksum = generation ^ 0xAE7B;
-        printf("[*] Updated existing marker at 0x%zx\n", offset);
+        DBG("[*] Updated existing marker at 0x%zx\n", offset);
         return offset;
     }
     
@@ -1683,7 +1683,7 @@ static size_t embed_marker(uint8_t *code, size_t size, uint32_t generation) {
     
     if (padding_offset != NOFFSET__) {
         memcpy(code + padding_offset, &new_marker, sizeof(marker_t));
-        printf("[*] Marker in %zu-byte padding at 0x%zx\n", max_padding_len, padding_offset);
+        DBG("[*] Marker in %zu-byte padding at 0x%zx\n", max_padding_len, padding_offset);
         return padding_offset;
     }
     
@@ -1697,7 +1697,7 @@ static size_t embed_marker(uint8_t *code, size_t size, uint32_t generation) {
         }
         if (all_nops) {
             memcpy(code + i, &new_marker, sizeof(marker_t));
-            printf("[*] Marker in NOP at 0x%zx\n", i);
+            DBG("[*] Marker in NOP at 0x%zx\n", i);
             return i;
         }
     }
@@ -1712,7 +1712,7 @@ static size_t embed_marker(uint8_t *code, size_t size, uint32_t generation) {
         }
         if (all_int3) {
             memcpy(code + i, &new_marker, sizeof(marker_t));
-            printf("[*] Marker in INT3 at 0x%zx\n", i);
+            DBG("[*] Marker in INT3 at 0x%zx\n", i);
             return i;
         }
     }
@@ -1732,7 +1732,7 @@ static size_t embed_marker(uint8_t *code, size_t size, uint32_t generation) {
             
             if (all_padding) {
                 memcpy(code + offset, &new_marker, sizeof(marker_t));
-                printf("[*] Marker near end at 0x%zx\n", offset);
+                DBG("[*] Marker near end at 0x%zx\n", offset);
                 return offset;
             }
         }
@@ -1751,7 +1751,7 @@ static size_t embed_marker(uint8_t *code, size_t size, uint32_t generation) {
             /* Fill entire region with NOPs first, then embed marker */
             memset(code + i, 0x90, sizeof(marker_t));
             memcpy(code + i, &new_marker, sizeof(marker_t));
-            printf("[*] Marker with NOP fill at 0x%zx (%zu)\n", i, padding_count);
+            DBG("[*] Marker with NOP fill at 0x%zx (%zu)\n", i, padding_count);
             return i;
         }
     }
@@ -1822,7 +1822,7 @@ int mutator(void) {
     intptr_t slide = img_slide(mh);
     uint8_t *runtime_text_base = (uint8_t *)(tsec.vm_start + slide);
     
-    printf("file=0x%llx-0x%llx, vm=0x%llx-0x%llx, slide=0x%lx, runtime=%p\n",
+    DBG("file=0x%llx-0x%llx, vm=0x%llx-0x%llx, slide=0x%lx, runtime=%p\n",
         tsec.file_start, tsec.file_end, tsec.vm_start, tsec.vm_end, slide, runtime_text_base);
     
     int fd = open(pathbuf, O_RDONLY);
@@ -1843,27 +1843,27 @@ int mutator(void) {
     /* Check generation marker in code */
     uint32_t current_gen = 0;
     if (!check_generation(original_text, text_size, &current_gen)) {
-        printf("[*] Max generations (%u) reached, No mutation\n", MX_GEN);
+        DBG("[*] Max generations (%u) reached, No mutation\n", MX_GEN);
         free(original_text);
         return 0;
     }
     
-    printf("[*] Generation: %u/%u\n", current_gen, MX_GEN);
+    DBG("[*] Generation: %u/%u\n", current_gen, MX_GEN);
     
     /* Embed initial marker in virgin binary*/
     if (current_gen == 0) {
         g_marker_offset = embed_marker(original_text, text_size, 0);
         if (g_marker_offset != NOFFSET__) {
-            printf("[*] Initial marker at offset 0x%zx\n", g_marker_offset);
+            DBG("[*] Initial marker at offset 0x%zx\n", g_marker_offset);
         } else {
-            printf("[!] Can't embed marker\n");
+            DBG("[!] Can't embed marker\n");
         }
     } else {
         /* Marker location */
         marker_t *marker = find_marker(original_text, text_size);
         if (marker) {
             g_marker_offset = (uint8_t*)marker - original_text;
-            printf("[*] Found Marker at offset 0x%zx\n", g_marker_offset);
+            DBG("[*] Found Marker at offset 0x%zx\n", g_marker_offset);
         }
     }
 #else
@@ -1895,7 +1895,7 @@ int mutator(void) {
     unsigned next_gen = current_gen + 1;
     
     if (next_gen > max_gen_limit) {
-        printf("[*] Max generation (%u) reached\n", max_gen_limit);
+        DBG("[*] Max generation (%u) reached\n", max_gen_limit);
         free(backup);
         free(ctx.ogicode);
         free(ctx.working_code);
@@ -1906,13 +1906,13 @@ int mutator(void) {
         return 0;
     }
     
-    printf("[*]  Mutating: Gen %u > Gen %u \n", current_gen, next_gen);    
+    DBG("[*]  Mutating: Gen %u > Gen %u \n", current_gen, next_gen);    
     if (g_marker_offset != NOFFSET__ && g_marker_offset < text_size) {
         if (ctx.numcheck < (_CAPZ / 2)) {
             ctx.ranges[ctx.numcheck * 2] = g_marker_offset;
             ctx.ranges[ctx.numcheck * 2 + 1] = g_marker_offset + sizeof(marker_t) + 8;
             ctx.numcheck++;
-            printf("[*] Marker region [0x%zx - 0x%zx]\n", 
+            DBG("[*] Marker region [0x%zx - 0x%zx]\n", 
                    g_marker_offset, g_marker_offset + sizeof(marker_t) + 8);
         }
     }
@@ -1921,7 +1921,7 @@ int mutator(void) {
     size_t backup_size = ctx.codesz;
     
     if (!mOrph(&ctx, next_gen, text_size)) {
-        printf("[!] Generation %u failed\n", next_gen);
+        DBG("[!] Generation %u failed\n", next_gen);
         memcpy(ctx.working_code, backup, text_size);
         ctx.codesz = backup_size;
         free(backup);
@@ -1945,7 +1945,7 @@ int mutator(void) {
     }
     
     if (!is_chunk_ok(ctx.working_code, ctx.codesz)) {
-        printf("[!] Generation %u produced invalid code\n", next_gen);
+        DBG("[!] Generation %u produced invalid code\n", next_gen);
         memcpy(ctx.working_code, backup, text_size);
         ctx.codesz = backup_size;
         free(backup);
@@ -1960,7 +1960,7 @@ int mutator(void) {
     
     if (memcmp(ctx.working_code, backup, MIN(ctx.codesz, text_size)) != 0) {
         mutated = true;
-        printf("[+] Generation %u: %zu bytes (%.1f%% growth)\n", 
+        DBG("[+] Generation %u: %zu bytes (%.1f%% growth)\n", 
             next_gen, ctx.codesz, 100.0 * (ctx.codesz - backup_size) / backup_size);
     }
     
@@ -1971,7 +1971,7 @@ int mutator(void) {
         size_t backup_size = ctx.codesz;
         
         if (!mOrph(&ctx, gen, text_size)) {
-            printf("[!] Generation %u failed\n", gen);
+            DBG("[!] Generation %u failed\n", gen);
             memcpy(ctx.working_code, backup, text_size);
             ctx.codesz = backup_size;
             break;
@@ -1979,7 +1979,7 @@ int mutator(void) {
         
         /* Validate  */
         if (!is_chunk_ok(ctx.working_code, ctx.codesz)) {
-            printf("[!] Generation %u produced invalid code\n", gen);
+            DBG("[!] Generation %u produced invalid code\n", gen);
             memcpy(ctx.working_code, backup, text_size);
             ctx.codesz = backup_size;
             break;
@@ -1987,7 +1987,7 @@ int mutator(void) {
         
         if (memcmp(ctx.working_code, backup, MIN(ctx.codesz, text_size)) != 0) {
             mutated = true;
-            printf("[+] Generation %u: %zu bytes (%.1f%% growth)\n", 
+            DBG("[+] Generation %u: %zu bytes (%.1f%% growth)\n", 
                 gen, ctx.codesz, 100.0 * (ctx.codesz - backup_size) / backup_size);
         }
     }
@@ -2005,7 +2005,7 @@ int mutator(void) {
 #ifdef FOO
         /* Force code size to match original */
         if (ctx.codesz != text_size) {
-            printf("[!] Size mismatch: %zu != %zu, forcing to original\n", ctx.codesz, text_size);
+            DBG("[!] Size mismatch: %zu != %zu, forcing to original\n", ctx.codesz, text_size);
             ctx.codesz = text_size;
         }
         
@@ -2022,44 +2022,44 @@ int mutator(void) {
                                          tsec.vm_start, arch_type);
             
             if (ctx.reloc_table) {
-                printf("[*] Relocation table built\n");
+                DBG("[*] Relocation table built\n");
             }
             
             /* Update marker to next generation */
             size_t marker_offset = embed_marker(ctx.working_code, ctx.codesz, next_gen);
             if (marker_offset != NOFFSET__) {
-                printf("[*] Updated marker: %u -> %u (offset 0x%zx)\n", 
+                DBG("[*] Updated marker: %u -> %u (offset 0x%zx)\n", 
                     current_gen, next_gen, marker_offset);
             } else {
-                printf("[!] Failed to update marker\n");
+                DBG("[!] Failed to update marker\n");
             }
             
             success = dsk_mut(&ctx, pathbuf, tsec.file_start, text_size);
             
             if (success) {
-                printf("[+] Mutation passed (gen %u -> %u)\n", current_gen, next_gen);
+                DBG("[+] Mutation passed (gen %u -> %u)\n", current_gen, next_gen);
             } else {
-                printf("[!] Disk mutation failed\n");
+                DBG("[!] Disk mutation failed\n");
                 die();
             }
         } else {
-            printf("[!] Cannot write size increased (%zu > %zu)\n", 
+            DBG("[!] Cannot write size increased (%zu > %zu)\n", 
                 ctx.codesz, text_size);
             success = false;
         }
 #else
         if (!is_chunk_ok(ctx.working_code, ctx.codesz)) {
-            printf("[!] Code failed validation\n");
+            DBG("[!] Code failed validation\n");
             success = false;
         } else {
-            printf("[+] Code validated\n"); 
-            printf("Attempting reflective load...\n");
+            DBG("[+] Code validated\n"); 
+            DBG("Attempting reflective load...\n");
             
             /* Apply mutations via reflective loading */
             {
-                printf("  Original size: %zu bytes\n", text_size);
-                printf("  Mutated size:  %zu bytes\n", ctx.codesz);
-                printf("  Growth:        %.1f%%\n", 100.0 * (ctx.codesz - text_size) / text_size);
+                DBG("  Original size: %zu bytes\n", text_size);
+                DBG("  Mutated size:  %zu bytes\n", ctx.codesz);
+                DBG("  Growth:        %.1f%%\n", 100.0 * (ctx.codesz - text_size) / text_size);
                 
                 size_t mutations_count = 0;
                 size_t compare_size = MIN(ctx.codesz, text_size);
@@ -2069,7 +2069,7 @@ int mutator(void) {
                     }
                 }
                 
-                printf("  Mutations %zu bytes changed\n", mutations_count);
+                DBG("  Mutations %zu bytes changed\n", mutations_count);
                 
                 if (mutations_count == 0) {
                     success = false;
@@ -2080,17 +2080,17 @@ int mutator(void) {
                     uint8_t *macho_binary = wrap_macho(ctx.working_code, ctx.codesz, &macho_size);
                     
                     if (!macho_binary) {
-                        printf("Failed to wrap\n");
+                        DBG("Failed to wrap\n");
                         success = false;
                     } else {
-                        printf("Wrapped in Mach-O structure (%zu bytes)\n", macho_size);
+                        DBG("Wrapped in Mach-O structure (%zu bytes)\n", macho_size);
                         
                         if (!V_machO(macho_binary, macho_size)) {
-                            printf("Mach-O verification failed\n");
+                            DBG("Mach-O verification failed\n");
                             free(macho_binary);
                             success = false;
                         } else {
-                            printf("Mach-O V Passed\n");
+                            DBG("Mach-O V Passed\n");
                             
                             success = exec_mem(macho_binary, macho_size);
                             
@@ -2107,7 +2107,7 @@ int mutator(void) {
             }
             
             if (!success) {
-                printf("[!] Loading failed\n");
+                DBG("[!] Loading failed\n");
                 die();
             }
         }
@@ -2125,7 +2125,7 @@ int mutator(void) {
          * Leavin' the binary's too fucked2mutate again.
          * It's the cons of max obfuscation.
          */
-        printf("[!] No mutations!! \n");
+        DBG("[!] No mutations!! \n");
 #ifdef FOO
         /* is expected if binary is already mutated */
 #else
