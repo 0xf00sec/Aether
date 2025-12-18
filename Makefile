@@ -7,8 +7,9 @@ NC     := \033[0m
 
 # Compiler 
 CC       := gcc
-CFLAGS   := -Wall -Wextra -Iinc -Iinclude -Isrc/x86 -Isrc/arm64 -w 
-LDFLAGS  := -lcurl -lssl -lcrypto -lz -lpthread -framework CoreFoundation -framework Security -framework OpenDirectory 
+OPENSSL_PATH := $(shell brew --prefix openssl@3)
+CFLAGS   := -Wall -Wextra -Iinc -Iinclude -Isrc/x86 -Isrc/arm64 -I$(OPENSSL_PATH)/include -w 
+LDFLAGS  := -L$(OPENSSL_PATH)/lib -lcurl -lssl -lcrypto -lz -lpthread -framework CoreFoundation -framework Security -framework OpenDirectory 
 
 # Dir
 SRC_DIR  := src

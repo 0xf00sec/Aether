@@ -2,7 +2,7 @@
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 // ARM64 stub for x86 function
-bool decode_x86_withme(const uint8_t *code, size_t size, uintptr_t ip, x86_inst_t *inst, memread_fn mem_read) {
+bool decode_x86_withme(const uint8_t *code, size_t max_len, uint64_t addr, x86_inst_t *inst, void *ctx) {
     return false;
 }
 #endif
