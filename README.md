@@ -1,3 +1,5 @@
-Aether is a minimalist macOS engine (x86/ARM) that rewrites its own executable at runtime. It mutates instruction by instruction, preserving behavior while evading static analysis. The engine uses in-memory encryption, native APIs, and Mach-O tricks, with a dead-drop C2 for communication. Anti-analysis features include ptrace blocking, debugger detection, self-destruct, and memory-only execution. Everything is modular you can extend modules for custom evasion, alternative C2s, stealth, or persistence. Each payload generation looks completely different from the last but behaves identically. 
+Aether is a minimalist macOS engine (x86/ARM) that rewrites its own executable at runtime. It mutates instruction by instruction, preserving behavior while evading static analysis. The engine uses in-memory encryption, native APIs, and Mach-O tricks, with a dead-drop C2 for communication. 
 
-> This is just a simple PoC. No funny shit!
+> Anti-analysis features include ptrace blocking, debugger detection, self-destruct, and memory-only execution. Everything is modular you can extend modules for custom evasion, alternative C2s, stealth, or persistence. Each payload generation looks completely different from the last but behaves identically. 
+
+**This is just a PoC. No funny shit!**
