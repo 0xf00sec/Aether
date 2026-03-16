@@ -1,9 +1,7 @@
-Aether is a metamorphic implant (x86/ARM) that rewrites its own executable at runtime through liveness-aware instruction mutation and reflective loading. It mutates instruction by instruction, preserving behavior while evading static analysis. The engine uses in-memory encryption, 
-native APIs, and Mach-O tricks, with a dead-drop C2 for communication, Anti-analysis features include ptrace blocking, debugger detection, self-destruct, and memory-only execution.
+# Aether
 
-To read about it > https://0xf00sec.github.io/0x4a
+macOS piece (x86/ARM) designed for runtime mutation and metamorphism through instruction-level. It rewrites its own executable code at runtime to evade static analysis while preserving semantics. In-memory encryption and a dead-drop C2 are used, and it operates entirely via native APIs and Mach-O manipulation.
 
-> Just a PoC no funny shit! it's detectable during behavioral analysis. However, if you know what you're doing, everything is modular you can extend modules
-for custom evasion, alternative C2s, stealth, or persistence. Each payload generation looks completely different from the last but behaves identically.
+> This is just a PoC. No funny shit! it’s detectable during behavioral analysis. However, if you know what you’re doing, you can extend each module for custom techniques, dynamic C2, stealth, alternative persistence methods, or simply extract the engine and use it standalone or build it how you like.
 
-**RESEARCH USE ONLY.**
+#### RESEARCH USE ONLY.
